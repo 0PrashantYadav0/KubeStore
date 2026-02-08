@@ -1,0 +1,27 @@
+{{- if .Values.resourceQuota.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-quota
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- toYaml .Values.resourceQuota.hard | nindent 4 }}
+{{- end }}
+---
+{{- if .Values.limitRange.enabled }}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-limits
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+spec:
+  limits:
+    - default:
+        {{- toYaml .Values.limitRange.default | nindent 8 }}
+      defaultRequest:
+        {{- toYaml .Values.limitRange.defaultRequest | nindent 8 }}
+      type: Container
+{{- end }}

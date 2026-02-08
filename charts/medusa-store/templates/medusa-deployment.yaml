@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-medusa
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: medusa
+spec:
+  replicas: {{ .Values.medusa.replicas }}
+  selector:
+    matchLabels:
+      {{- include "medusa-store.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: medusa
+  template:
+    metadata:
+      labels:
+        {{- include "medusa-store.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: medusa
+    spec:
+      containers:
+        - name: nginx
+          image: "{{ .Values.medusa.image.repository }}:{{ .Values.medusa.image.tag }}"
+          imagePullPolicy: {{ .Values.medusa.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          volumeMounts:
+            - name: html-content
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+          resources:
+            {{- toYaml .Values.medusa.resources | nindent 12 }}
+          {{- with .Values.medusa.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.medusa.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: html-content
+          configMap:
+            name: {{ include "medusa-store.fullname" . }}-html

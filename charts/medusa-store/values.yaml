@@ -1,0 +1,130 @@
+# Default values for medusa-store
+# This is a YAML-formatted file.
+
+# Store identification
+store:
+  id: ""
+  name: ""
+
+# Store application (nginx serving HTML)
+medusa:
+  image:
+    repository: nginx
+    tag: "alpine"
+    pullPolicy: IfNotPresent
+  
+  replicas: 1
+  
+  # Resource limits
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "25m"
+    limits:
+      memory: "64Mi"
+      cpu: "100m"
+  
+  # Environment variables (not used for nginx but kept for compatibility)
+  env:
+    NODE_ENV: "development"
+    JWT_SECRET: "supersecret"
+    COOKIE_SECRET: "supersecret"
+  
+  # Liveness and readiness probes - nginx serves on port 80
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 3
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# PostgreSQL database
+postgresql:
+  enabled: true
+  
+  image:
+    repository: postgres
+    tag: "15-alpine"
+    pullPolicy: IfNotPresent
+  
+  auth:
+    database: medusa
+    username: medusa
+    password: medusa123
+  
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+# Redis cache
+redis:
+  enabled: true
+  
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "25m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  # Domain template: store-{id}.{baseDomain}
+  baseDomain: "127.0.0.1.nip.io"
+  tls:
+    enabled: false
+
+# Resource quotas for namespace
+resourceQuota:
+  enabled: true
+  hard:
+    requests.cpu: "1"
+    requests.memory: "1Gi"
+    limits.cpu: "2"
+    limits.memory: "2Gi"
+    persistentvolumeclaims: "2"
+    pods: "10"
+
+# Limit range for default limits
+limitRange:
+  enabled: true
+  default:
+    cpu: "200m"
+    memory: "256Mi"
+  defaultRequest:
+    cpu: "50m"
+    memory: "64Mi"
