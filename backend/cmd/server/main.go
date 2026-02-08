@@ -1,0 +1,125 @@
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/kubestore/backend/internal/api"
+	"github.com/kubestore/backend/internal/helm"
+	"github.com/kubestore/backend/internal/repository"
+	"github.com/kubestore/backend/internal/services"
+)
+
+func main() {
+	// Configuration from environment
+	port := getEnv("PORT", "8080")
+	chartPath := getEnv("HELM_CHART_PATH", "./charts/medusa-store")
+	ingressDomain := getEnv("INGRESS_DOMAIN", "127.0.0.1.nip.io")
+	maxStores := 10 // Default max stores
+
+	// Convert to absolute path - try multiple locations
+	chartPath = resolveChartPath(chartPath)
+
+	log.Printf("Starting KubeStore Backend")
+	log.Printf("  Port: %s", port)
+	log.Printf("  Helm Chart: %s", chartPath)
+	log.Printf("  Ingress Domain: %s", ingressDomain)
+
+	// Initialize components
+	repo := repository.NewInMemoryRepository()
+
+	helmClient := helm.NewClient(helm.Config{
+		ChartPath:     chartPath,
+		IngressDomain: ingressDomain,
+	})
+
+	storeService := services.NewStoreService(repo, helmClient, services.Config{
+		MaxStores:     maxStores,
+		IngressDomain: ingressDomain,
+		ChartPath:     chartPath,
+	})
+
+	handler := api.NewHandler(storeService)
+	router := api.NewRouter(handler)
+
+	// Start status watcher
+	stopCh := make(chan struct{})
+	go storeService.WatchStoreStatus(30*time.Second, stopCh)
+
+	// Create server
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Start server in goroutine
+	go func() {
+		log.Printf("Server listening on :%s", port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down server...")
+	close(stopCh)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced shutdown: %v", err)
+	}
+
+	log.Println("Server exited cleanly")
+}
+
+// getEnv gets an environment variable with a default value
+func getEnv(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return defaultValue
+}
+
+// resolveChartPath finds and returns absolute path to chart
+func resolveChartPath(chartPath string) string {
+	// Try the provided path first
+	if absPath, err := filepath.Abs(chartPath); err == nil {
+		if _, err := os.Stat(absPath); err == nil {
+			return absPath
+		}
+	}
+
+	// Try common relative paths
+	paths := []string{
+		"./charts/medusa-store",
+		"../charts/medusa-store",
+		"../../charts/medusa-store",
+	}
+
+	for _, p := range paths {
+		if absPath, err := filepath.Abs(p); err == nil {
+			if _, err := os.Stat(absPath); err == nil {
+				log.Printf("  Found chart at: %s", absPath)
+				return absPath
+			}
+		}
+	}
+
+	log.Println("  Warning: Could not locate Helm chart")
+	return chartPath
+}
