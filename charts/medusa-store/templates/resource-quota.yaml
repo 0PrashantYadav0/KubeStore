@@ -7,7 +7,9 @@ metadata:
     {{- include "medusa-store.labels" . | nindent 4 }}
 spec:
   hard:
-    {{- toYaml .Values.resourceQuota.hard | nindent 4 }}
+    {{- range $key, $value := .Values.resourceQuota.limits }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
 {{- end }}
 ---
 {{- if .Values.limitRange.enabled }}
@@ -19,9 +21,14 @@ metadata:
     {{- include "medusa-store.labels" . | nindent 4 }}
 spec:
   limits:
-    - default:
-        {{- toYaml .Values.limitRange.default | nindent 8 }}
+    - type: Container
+      default:
+        memory: {{ .Values.limitRange.default.memory | quote }}
+        cpu: {{ .Values.limitRange.default.cpu | quote }}
       defaultRequest:
-        {{- toYaml .Values.limitRange.defaultRequest | nindent 8 }}
-      type: Container
+        memory: {{ .Values.limitRange.defaultRequest.memory | quote }}
+        cpu: {{ .Values.limitRange.defaultRequest.cpu | quote }}
+      max:
+        memory: {{ .Values.limitRange.max.memory | quote }}
+        cpu: {{ .Values.limitRange.max.cpu | quote }}
 {{- end }}

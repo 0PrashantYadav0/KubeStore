@@ -1,0 +1,97 @@
+{{- if .Values.storefront.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-storefront
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: storefront
+spec:
+  replicas: {{ .Values.storefront.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "medusa-store.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: storefront
+  template:
+    metadata:
+      labels:
+        {{- include "medusa-store.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: storefront
+    spec:
+      {{- if .Values.rbac.enabled }}
+      serviceAccountName: {{ include "medusa-store.fullname" . }}-sa
+      {{- end }}
+      containers:
+        - name: storefront
+          image: "{{ .Values.storefront.image.repository }}:{{ .Values.storefront.image.tag }}"
+          imagePullPolicy: {{ .Values.storefront.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.storefront.port | default 3000 }}
+              name: http
+          env:
+            - name: PORT
+              value: "{{ .Values.storefront.port | default 3000 | toString }}"
+            - name: NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "medusa-store.fullname" . }}-secrets
+                  key: PUBLISHABLE_API_KEY
+            # Runtime key for middleware (NEXT_PUBLIC_* is baked at build time in Edge runtime)
+            - name: MEDUSA_PUBLISHABLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "medusa-store.fullname" . }}-secrets
+                  key: PUBLISHABLE_API_KEY
+            - name: MEDUSA_BACKEND_URL
+              value: "http://{{ include "medusa-store.fullname" . }}-medusa:9000"
+            - name: NEXT_PUBLIC_MEDUSA_BACKEND_URL
+              value: "http://{{ include "medusa-store.ingressHost" . }}"
+            - name: NEXT_PUBLIC_BASE_URL
+              value: "http://{{ include "medusa-store.ingressHost" . }}"
+            - name: NODE_ENV
+              value: "{{ .Values.storefront.env.NODE_ENV | default "production" }}"
+            - name: NEXT_PUBLIC_DEFAULT_REGION
+              value: "{{ .Values.storefront.env.NEXT_PUBLIC_DEFAULT_REGION | default "us" }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.storefront.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.storefront.port | default 3000 }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 10
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.storefront.port | default 3000 }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+{{- end }}
+---
+{{- if .Values.storefront.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-storefront
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: storefront
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.storefront.port | default 3000 }}
+      targetPort: {{ .Values.storefront.port | default 3000 }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "medusa-store.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: storefront
+{{- end }}

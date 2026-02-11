@@ -1,0 +1,27 @@
+# Local development overrides (Kind/k3d/Minikube).
+# This file is meant to be used *in addition to* the chart defaults in `values.yaml`.
+#
+# Example:
+#   helm install s123 ./charts/medusa-store -f charts/medusa-store/values-local.yaml
+
+medusa:
+  image:
+    pullPolicy: Never
+  env:
+    NODE_ENV: "development"
+    STORE_CORS: "*"
+    ADMIN_CORS: "*"
+
+postgresql:
+  storage:
+    size: "1Gi"
+
+storefront:
+  image:
+    pullPolicy: Never
+
+ingress:
+  baseDomain: "127.0.0.1.nip.io"
+  tls:
+    enabled: false
+

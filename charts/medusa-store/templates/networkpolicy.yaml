@@ -1,0 +1,202 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+spec:
+  # Default deny all ingress and egress
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-allow-medusa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+spec:
+  # Allow ingress/egress for Medusa pods
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: medusa
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Allow from same namespace (internal services)
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 9000
+  egress:
+    # Allow to PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Allow to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow external HTTPS (for payment gateways, etc)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-allow-storefront
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+spec:
+  # Allow ingress/egress for Storefront pods
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: storefront
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: {{ .Values.storefront.port | default 3000 }}
+    # Allow from same namespace
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.storefront.port | default 3000 }}
+  egress:
+    # Allow to Medusa API
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: medusa
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-allow-postgresql
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+spec:
+  # Allow traffic to PostgreSQL
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: postgresql
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from Medusa only
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: medusa
+      ports:
+        - protocol: TCP
+          port: 5432
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-allow-redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+spec:
+  # Allow traffic to Redis
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from Medusa only
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: medusa
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+{{- end }}

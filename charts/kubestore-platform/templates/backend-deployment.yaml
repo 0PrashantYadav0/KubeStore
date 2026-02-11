@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubestore-platform.fullname" . }}-backend
+  labels:
+    {{- include "kubestore-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: backend
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ include "kubestore-platform.fullname" . }}-backend-sa
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: HELM_CHART_PATH
+              value: "/charts/medusa-store"
+            - name: HELM_VALUES_FILE
+              value: {{ .Values.stores.valuesFile | quote }}
+            - name: INGRESS_DOMAIN
+              value: {{ .Values.stores.baseDomain | quote }}
+            - name: STORE_DB_PATH
+              value: "/data/kubestore.db"
+            - name: MAX_STORES_TOTAL
+              value: {{ .Values.limits.maxStoresTotal | quote }}
+            - name: MAX_STORES_PER_USER
+              value: {{ .Values.limits.maxStoresPerUser | quote }}
+            - name: PROVISION_WORKERS
+              value: {{ .Values.limits.provisionWorkers | quote }}
+          volumeMounts:
+            {{- if .Values.backend.persistence.enabled }}
+            - name: backend-data
+              mountPath: /data
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+      volumes:
+        {{- if .Values.backend.persistence.enabled }}
+        - name: backend-data
+          persistentVolumeClaim:
+            claimName: {{ include "kubestore-platform.fullname" . }}-backend-data
+        {{- end }}
+

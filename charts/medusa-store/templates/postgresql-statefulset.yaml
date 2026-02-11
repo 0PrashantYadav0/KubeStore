@@ -1,13 +1,12 @@
-{{- if .Values.postgresql.enabled }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "medusa-store.postgresHost" . }}
+  name: {{ include "medusa-store.fullname" . }}-postgresql
   labels:
     {{- include "medusa-store.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgresql
 spec:
-  serviceName: {{ include "medusa-store.postgresHost" . }}
+  serviceName: {{ include "medusa-store.fullname" . }}-postgresql
   replicas: 1
   selector:
     matchLabels:
@@ -24,7 +23,7 @@ spec:
           image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
           imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
           ports:
-            - name: postgres
+            - name: postgresql
               containerPort: 5432
               protocol: TCP
           env:
@@ -46,7 +45,7 @@ spec:
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           volumeMounts:
-            - name: data
+            - name: postgresql-data
               mountPath: /var/lib/postgresql/data
           resources:
             {{- toYaml .Values.postgresql.resources | nindent 12 }}
@@ -55,33 +54,29 @@ spec:
               command:
                 - pg_isready
                 - -U
-                - {{ .Values.postgresql.auth.username }}
+                - {{ .Values.postgresql.username }}
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 6
           readinessProbe:
             exec:
               command:
                 - pg_isready
                 - -U
-                - {{ .Values.postgresql.auth.username }}
+                - {{ .Values.postgresql.username }}
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3
-            failureThreshold: 3
-  {{- if .Values.postgresql.persistence.enabled }}
+            failureThreshold: 6
   volumeClaimTemplates:
     - metadata:
-        name: data
+        name: postgresql-data
       spec:
-        accessModes:
-          - ReadWriteOnce
-        {{- if .Values.postgresql.persistence.storageClass }}
-        storageClassName: {{ .Values.postgresql.persistence.storageClass }}
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.postgresql.storage.storageClass }}
+        storageClassName: {{ .Values.postgresql.storage.storageClass }}
         {{- end }}
         resources:
           requests:
-            storage: {{ .Values.postgresql.persistence.size }}
-  {{- end }}
-{{- end }}
+            storage: {{ .Values.postgresql.storage.size }}

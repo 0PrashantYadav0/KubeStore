@@ -1,0 +1,66 @@
+# Production-like defaults (k3s/VPS).
+
+backend:
+  image:
+    repository: kubestore-backend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  # Note: default persistence is a single-writer BoltDB file, so keep this at 1
+  # unless you switch the repository to an external DB and add leader election.
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: "local-path"
+
+dashboard:
+  image:
+    repository: kubestore-dashboard
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+ingress:
+  enabled: true
+  className: nginx
+  baseDomain: "yourdomain.com"
+  host: "dashboard.yourdomain.com"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  tls:
+    enabled: true
+    secretName: "kubestore-dashboard-tls"
+
+stores:
+  baseDomain: "yourdomain.com"
+  valuesFile: "/charts/medusa-store/values-production.yaml"
+
+limits:
+  maxStoresTotal: 200
+  maxStoresPerUser: 10
+  provisionWorkers: 5
+

@@ -1,0 +1,215 @@
+{{- if and .Values.bootstrap.enabled .Values.storefront.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-bootstrap
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "medusa-store.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "medusa-store.fullname" . }}-bootstrap-sa
+      containers:
+        - name: bootstrap
+          image: "{{ .Values.medusa.image.repository }}:{{ .Values.medusa.image.tag }}"
+          imagePullPolicy: {{ .Values.medusa.image.pullPolicy }}
+          env:
+            - name: MEDUSA_INTERNAL_URL
+              value: "http://{{ include "medusa-store.fullname" . }}-medusa:9000"
+            - name: SECRET_NAME
+              value: "{{ include "medusa-store.fullname" . }}-secrets"
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "medusa-store.fullname" . }}-secrets
+                  key: ADMIN_EMAIL
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "medusa-store.fullname" . }}-secrets
+                  key: ADMIN_PASSWORD
+            - name: SEED_DEMO_DATA
+              value: {{ ternary "true" "false" .Values.bootstrap.seedDemoData | quote }}
+          command:
+            - node
+            - -e
+            - |
+              const fs = require("fs");
+              const https = require("https");
+              const { execSync } = require("child_process");
+              
+              const base = process.env.MEDUSA_INTERNAL_URL;
+              const ns = process.env.NAMESPACE;
+              const secretName = process.env.SECRET_NAME;
+              const email = process.env.ADMIN_EMAIL;
+              const password = process.env.ADMIN_PASSWORD;
+              const seed = process.env.SEED_DEMO_DATA === "true";
+              
+              const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+              
+              async function waitForHealth(timeoutMs) {
+                const deadline = Date.now() + timeoutMs;
+                while (Date.now() < deadline) {
+                  try {
+                    const res = await fetch(`${base}/health`);
+                    if (res.ok) return;
+                  } catch {}
+                  await sleep(2000);
+                }
+                throw new Error(`Medusa health check timeout after ${timeoutMs}ms`);
+              }
+              
+              function tryExec(cmd) {
+                try {
+                  execSync(cmd, { stdio: "inherit" });
+                  return true;
+                } catch (e) {
+                  console.log(`[bootstrap] command failed (ignored): ${cmd}`);
+                  return false;
+                }
+              }
+              
+              async function login() {
+                const res = await fetch(`${base}/auth/user/emailpass`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ email, password }),
+                });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok || !body.token) {
+                  throw new Error(`Login failed: ${res.status} ${JSON.stringify(body)}`);
+                }
+                return body.token;
+              }
+              
+              async function ensurePublishableKey(token) {
+                // Try list first (idempotent)
+                const listRes = await fetch(`${base}/admin/api-keys?type=publishable`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                const listBody = await listRes.json().catch(() => ({}));
+                const existing = (listBody.api_keys || listBody.apiKeys || []).find((k) => k.token);
+                if (existing?.token) {
+                  return { id: existing.id, token: existing.token };
+                }
+              
+                const createRes = await fetch(`${base}/admin/api-keys`, {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({ title: "Storefront Key", type: "publishable" }),
+                });
+                const createBody = await createRes.json().catch(() => ({}));
+                const apiKey = createBody.api_key || createBody.apiKey;
+                if (!createRes.ok || !apiKey?.token || !apiKey?.id) {
+                  throw new Error(`Create API key failed: ${createRes.status} ${JSON.stringify(createBody)}`);
+                }
+                return { id: apiKey.id, token: apiKey.token };
+              }
+              
+              async function ensureSalesChannelLink(token, apiKeyId) {
+                const scRes = await fetch(`${base}/admin/sales-channels`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                const scBody = await scRes.json().catch(() => ({}));
+                const sc = (scBody.sales_channels || scBody.salesChannels || [])[0];
+                if (!sc?.id) return;
+              
+                await fetch(`${base}/admin/api-keys/${apiKeyId}/sales-channels`, {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({ add: [sc.id] }),
+                }).catch(() => {});
+              }
+              
+              async function patchSecretPublishableKey(publishableKeyToken) {
+                const host = process.env.KUBERNETES_SERVICE_HOST;
+                const port = process.env.KUBERNETES_SERVICE_PORT_HTTPS || "443";
+                const token = fs.readFileSync("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8").trim();
+                const ca = fs.readFileSync("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt");
+              
+                const body = JSON.stringify({
+                  stringData: { PUBLISHABLE_API_KEY: publishableKeyToken },
+                });
+              
+                const path = `/api/v1/namespaces/${ns}/secrets/${secretName}`;
+                await new Promise((resolve, reject) => {
+                  const req = https.request(
+                    {
+                      host,
+                      port,
+                      path,
+                      method: "PATCH",
+                      ca,
+                      headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/merge-patch+json",
+                        "Content-Length": Buffer.byteLength(body),
+                      },
+                    },
+                    (res) => {
+                      let data = "";
+                      res.on("data", (c) => (data += c));
+                      res.on("end", () => {
+                        if (res.statusCode >= 200 && res.statusCode < 300) return resolve();
+                        reject(new Error(`Patch Secret failed: ${res.statusCode} ${data}`));
+                      });
+                    }
+                  );
+                  req.on("error", reject);
+                  req.write(body);
+                  req.end();
+                });
+              }
+              
+              (async () => {
+                console.log("[bootstrap] waiting for medusa...");
+                await waitForHealth(10 * 60 * 1000);
+              
+                console.log("[bootstrap] ensuring admin user exists...");
+                // Non-interactive; ignore if already exists.
+                tryExec(`npx medusa user -e "${email}" -p "${password}"`);
+              
+                if (seed) {
+                  console.log("[bootstrap] seeding demo data...");
+                  // Best-effort; job is post-install only.
+                  execSync("npm run seed", { stdio: "inherit" });
+                }
+              
+                console.log("[bootstrap] logging in...");
+                const jwt = await login();
+              
+                console.log("[bootstrap] ensuring publishable API key...");
+                const apiKey = await ensurePublishableKey(jwt);
+              
+                console.log("[bootstrap] ensuring sales channel link...");
+                await ensureSalesChannelLink(jwt, apiKey.id);
+              
+                console.log("[bootstrap] storing publishable key in Secret...");
+                await patchSecretPublishableKey(apiKey.token);
+              
+                console.log("[bootstrap] done");
+              })().catch((e) => {
+                console.error("[bootstrap] failed:", e?.stack || e);
+                process.exit(1);
+              });
+{{- end }}
+

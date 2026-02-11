@@ -1,0 +1,83 @@
+{{- if .Values.rbac.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-sa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+rules:
+  # Minimal permissions - read-only for debugging
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # No secrets access - secrets managed by Helm
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-binding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "medusa-store.fullname" . }}-sa
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "medusa-store.fullname" . }}-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Bootstrap SA (one-time Job) can only patch the chart-managed Secret to inject
+# the publishable API key token for the storefront.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-bootstrap-sa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-bootstrap-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ include "medusa-store.fullname" . }}-secrets
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "medusa-store.fullname" . }}-bootstrap-binding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "medusa-store.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "medusa-store.fullname" . }}-bootstrap-sa
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "medusa-store.fullname" . }}-bootstrap-role
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

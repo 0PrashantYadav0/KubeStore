@@ -1,0 +1,188 @@
+# KubeStore Medusa Helm Chart Values - Production
+# Use these values for VPS/production deployment
+
+# Store metadata (set by orchestrator)
+store:
+  id: ""
+  name: ""
+
+# Medusa Backend Configuration
+medusa:
+  image:
+    # Override in production with your registry (e.g. ghcr.io/<you>/kubestore-medusa)
+    repository: kubestore-medusa
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  
+  replicas: 2  # Multiple replicas for HA
+  
+  # Resource limits - higher for production
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1"
+  
+  # Environment variables
+  env:
+    NODE_ENV: "production"
+    MEDUSA_ADMIN_ONBOARDING_TYPE: "nextjs"
+    STORE_CORS: "https://*.yourdomain.com"
+    ADMIN_CORS: "https://admin.yourdomain.com"
+  
+  # Liveness and readiness probes
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 9000
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+  
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 9000
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 10
+
+  # Admin credentials - USE SECRETS IN PRODUCTION
+  admin:
+    email: "admin@yourdomain.com"
+    # Leave empty to auto-generate (stored in K8s Secret, stable across upgrades).
+    # For production, you can also provide this via an external secret + `--set`.
+    password: ""
+
+# PostgreSQL database
+postgresql:
+  image:
+    repository: postgres
+    tag: "15-alpine"
+    pullPolicy: IfNotPresent
+  
+  # Database credentials - USE EXTERNAL SECRETS
+  database: medusa
+  username: medusa
+  # Leave empty to auto-generate (stored in K8s Secret, stable across upgrades).
+  # For production, you can also provide this via an external secret + `--set`.
+  password: ""
+  
+  # Storage - use appropriate storage class
+  storage:
+    size: "10Gi"
+    storageClass: "local-path"  # k3s default, change for cloud
+  
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1"
+
+# Redis cache
+redis:
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 9000
+
+# Ingress configuration - PRODUCTION
+ingress:
+  enabled: true
+  className: "nginx"
+  baseDomain: "yourdomain.com"  # CHANGE THIS
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    # TLS with cert-manager
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  tls:
+    enabled: true
+    secretName: "store-tls"
+
+# Resource quotas for namespace
+resourceQuota:
+  enabled: true
+  limits:
+    pods: "20"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+    persistentvolumeclaims: "5"
+    requests.storage: "50Gi"
+    requests.memory: "4Gi"
+    requests.cpu: "4"
+    limits.memory: "8Gi"
+    limits.cpu: "8"
+
+# Limit range for pods
+limitRange:
+  enabled: true
+  default:
+    memory: "512Mi"
+    cpu: "500m"
+  defaultRequest:
+    memory: "128Mi"
+    cpu: "100m"
+  max:
+    memory: "2Gi"
+    cpu: "2"
+
+# Next.js Storefront Configuration (Production)
+storefront:
+  enabled: true
+  image:
+    repository: kubestore-storefront
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  
+  replicas: 2  # Multiple replicas for HA
+  
+  # Container port (Next.js standalone runs on port 3000)
+  port: 8000
+  
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "1"
+  
+  # Environment variables
+  env:
+    NODE_ENV: "production"
+    NEXT_PUBLIC_DEFAULT_REGION: "us"
+
+# Network Policy Configuration (Production)
+networkPolicy:
+  enabled: true  # Deny-by-default with specific allows
+
+# RBAC Configuration (Production)
+rbac:
+  enabled: true  # Least-privilege ServiceAccount per store
+
+# One-time bootstrap (post-install) to make the store usable end-to-end.
+bootstrap:
+  enabled: true
+  seedDemoData: true

@@ -1,85 +1,88 @@
-# Default values for medusa-store
-# This is a YAML-formatted file.
+# KubeStore Medusa Helm Chart Values
+# Default values for local development
 
-# Store identification
+# Store metadata (set by orchestrator)
 store:
   id: ""
   name: ""
 
-# Store application (nginx serving HTML)
+# Medusa Backend Configuration
 medusa:
   image:
-    repository: nginx
-    tag: "alpine"
-    pullPolicy: IfNotPresent
+    repository: kubestore-medusa
+    tag: "latest"
+    pullPolicy: Never  
   
   replicas: 1
   
-  # Resource limits
+  # Resource limits (migrations need more memory)
   resources:
     requests:
-      memory: "32Mi"
-      cpu: "25m"
+      memory: "512Mi"
+      cpu: "200m"
     limits:
-      memory: "64Mi"
-      cpu: "100m"
+      memory: "1Gi"
+      cpu: "1"
   
-  # Environment variables (not used for nginx but kept for compatibility)
+  # Environment variables
   env:
     NODE_ENV: "development"
-    JWT_SECRET: "supersecret"
-    COOKIE_SECRET: "supersecret"
+    MEDUSA_ADMIN_ONBOARDING_TYPE: "nextjs"
+    STORE_CORS: "*"
+    ADMIN_CORS: "*"
   
-  # Liveness and readiness probes - nginx serves on port 80
+  # Liveness and readiness probes (Medusa runs migrations on startup, allow plenty of time)
   livenessProbe:
     httpGet:
-      path: /
-      port: 80
-    initialDelaySeconds: 5
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 3
+      path: /health
+      port: 9000
+    initialDelaySeconds: 180
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 10
   
   readinessProbe:
     httpGet:
-      path: /
-      port: 80
-    initialDelaySeconds: 3
-    periodSeconds: 5
-    timeoutSeconds: 3
-    failureThreshold: 3
+      path: /health
+      port: 9000
+    initialDelaySeconds: 90
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+
+  # Admin credentials (for seed)
+  admin:
+    email: "admin@medusa.local"
+    # Leave empty to auto-generate (stored in K8s Secret, stable across upgrades)
+    password: ""
 
 # PostgreSQL database
 postgresql:
-  enabled: true
-  
   image:
     repository: postgres
     tag: "15-alpine"
     pullPolicy: IfNotPresent
   
-  auth:
-    database: medusa
-    username: medusa
-    password: medusa123
+  # Database credentials (should be in secrets for prod)
+  database: medusa
+  username: medusa
+  # Leave empty to auto-generate (stored in K8s Secret, stable across upgrades)
+  password: ""
   
-  persistence:
-    enabled: true
-    size: 1Gi
-    storageClass: ""
-  
+  # Storage
+  storage:
+    size: "1Gi"
+
   resources:
     requests:
       memory: "128Mi"
-      cpu: "50m"
+      cpu: "100m"
     limits:
       memory: "256Mi"
-      cpu: "200m"
+      cpu: "500m"
 
 # Redis cache
 redis:
-  enabled: true
-  
   image:
     repository: redis
     tag: "7-alpine"
@@ -88,43 +91,92 @@ redis:
   resources:
     requests:
       memory: "64Mi"
-      cpu: "25m"
+      cpu: "50m"
     limits:
       memory: "128Mi"
-      cpu: "100m"
+      cpu: "200m"
 
 # Service configuration
 service:
   type: ClusterIP
-  port: 80
+  port: 9000
 
 # Ingress configuration
 ingress:
   enabled: true
-  className: nginx
-  annotations: {}
-  # Domain template: store-{id}.{baseDomain}
+  className: "nginx"
   baseDomain: "127.0.0.1.nip.io"
-  tls:
-    enabled: false
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
 
 # Resource quotas for namespace
 resourceQuota:
   enabled: true
-  hard:
-    requests.cpu: "1"
-    requests.memory: "1Gi"
-    limits.cpu: "2"
-    limits.memory: "2Gi"
-    persistentvolumeclaims: "2"
+  limits:
     pods: "10"
+    services: "5"
+    secrets: "10"
+    configmaps: "10"
+    persistentvolumeclaims: "3"
+    requests.storage: "10Gi"
+    requests.memory: "4Gi"
+    requests.cpu: "4"
+    limits.memory: "8Gi"
+    limits.cpu: "8"
 
-# Limit range for default limits
+# Limit range for pods
 limitRange:
   enabled: true
   default:
-    cpu: "200m"
     memory: "256Mi"
+    cpu: "200m"
   defaultRequest:
-    cpu: "50m"
     memory: "64Mi"
+    cpu: "50m"
+  max:
+    memory: "2Gi"
+    cpu: "2"
+
+# Next.js Storefront Configuration
+storefront:
+  enabled: true
+  image:
+    repository: kubestore-storefront
+    tag: "latest"
+    pullPolicy: Never  # Use local image from Kind
+  
+  replicas: 1
+  
+  # Container port (Next.js runs on port 8000 in production Dockerfile, port 3000 in standalone)
+  port: 8000
+  
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+  
+  # Environment variables
+  env:
+    NODE_ENV: "production"
+    NEXT_PUBLIC_DEFAULT_REGION: "us"
+
+# Network Policy Configuration
+networkPolicy:
+  enabled: true  # Deny-by-default with specific allows
+
+# RBAC Configuration
+rbac:
+  enabled: true  # Least-privilege ServiceAccount per store
+
+# One-time bootstrap (post-install) to make the store usable end-to-end:
+# - creates admin user
+# - seeds demo data
+# - creates + stores publishable API key for storefront
+bootstrap:
+  enabled: false
+  seedDemoData: false

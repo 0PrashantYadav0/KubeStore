@@ -6,6 +6,8 @@ metadata:
     {{- include "medusa-store.labels" . | nindent 4 }}
 data:
   NODE_ENV: {{ .Values.medusa.env.NODE_ENV | quote }}
-  MEDUSA_BACKEND_URL: {{ printf "http://store-%s.%s" (include "medusa-store.storeId" .) .Values.ingress.baseDomain | quote }}
-  STORE_CORS: "*"
-  ADMIN_CORS: "*"
+  STORE_CORS: {{ .Values.medusa.env.STORE_CORS | default "*" | quote }}
+  ADMIN_CORS: {{ .Values.medusa.env.ADMIN_CORS | default "*" | quote }}
+  AUTH_CORS: "*"
+  STORE_ID: {{ include "medusa-store.storeId" . | quote }}
+  STORE_NAME: {{ .Values.store.name | default "Store" | quote }}
