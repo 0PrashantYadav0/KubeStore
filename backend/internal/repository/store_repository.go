@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,8 @@ type StoreRepository interface {
 	Update(store *models.Store) error
 	Delete(id string) error
 	Count() int
+	CountByUser(userID string) int
+	FindByUserAndName(userID, name string) (*models.Store, error)
 }
 
 // InMemoryRepository implements StoreRepository using in-memory storage
@@ -101,4 +104,32 @@ func (r *InMemoryRepository) Count() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.stores)
+}
+
+// CountByUser returns number of stores owned by a user
+func (r *InMemoryRepository) CountByUser(userID string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	count := 0
+	for _, store := range r.stores {
+		if store.UserID == userID {
+			count++
+		}
+	}
+	return count
+}
+
+// FindByUserAndName finds a store by user + name (case-insensitive).
+// Useful for idempotent retries when a user submits the same store name again.
+func (r *InMemoryRepository) FindByUserAndName(userID, name string) (*models.Store, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, store := range r.stores {
+		if store.UserID == userID && strings.EqualFold(store.Name, name) {
+			return store, nil
+		}
+	}
+	return nil, models.ErrStoreNotFound
 }

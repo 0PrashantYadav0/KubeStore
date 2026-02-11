@@ -2,6 +2,7 @@ package helm
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 type Config struct {
 	ChartPath     string
 	IngressDomain string
+	ValuesFile    string // optional: values-production.yaml etc
 }
 
 // Client wraps Helm CLI operations
@@ -43,8 +45,12 @@ func (c *Client) Install(opts InstallOptions) error {
 		c.config.ChartPath,
 		"--namespace", opts.Namespace,
 		"--create-namespace",
-		"--wait",
-		"--timeout", "5m",
+		"--no-hooks",
+		"--timeout", "10m",
+	}
+
+	if strings.TrimSpace(c.config.ValuesFile) != "" {
+		args = append(args, "-f", c.config.ValuesFile)
 	}
 
 	// Add store-specific values
@@ -162,4 +168,110 @@ func (c *Client) ReleaseExists(releaseName, namespace string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// UpgradeOptions configures a Helm upgrade
+type UpgradeOptions struct {
+	ReleaseName string
+	Namespace   string
+	Values      map[string]string
+}
+
+// Upgrade upgrades a Helm release
+func (c *Client) Upgrade(opts UpgradeOptions) error {
+	args := []string{
+		"upgrade",
+		opts.ReleaseName,
+		c.config.ChartPath,
+		"--namespace", opts.Namespace,
+		"--wait",
+		"--timeout", "5m",
+	}
+
+	if strings.TrimSpace(c.config.ValuesFile) != "" {
+		args = append(args, "-f", c.config.ValuesFile)
+	}
+
+	// Add any additional values
+	for key, value := range opts.Values {
+		args = append(args, "--set", fmt.Sprintf("%s=%s", key, value))
+	}
+
+	cmd := exec.Command("helm", args...)
+	cmd.Env = os.Environ()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("helm upgrade failed: %s, stderr: %s", err, stderr.String())
+	}
+
+	return nil
+}
+
+// Rollback rolls back a Helm release to a specific revision
+func (c *Client) Rollback(releaseName, namespace string, revision int) error {
+	args := []string{
+		"rollback",
+		releaseName,
+		fmt.Sprintf("%d", revision),
+		"--namespace", namespace,
+		"--wait",
+	}
+
+	cmd := exec.Command("helm", args...)
+	cmd.Env = os.Environ()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("helm rollback failed: %s, stderr: %s", err, stderr.String())
+	}
+
+	return nil
+}
+
+// HistoryEntry represents a Helm release history entry
+type HistoryEntry struct {
+	Revision    int    `json:"revision"`
+	Updated     string `json:"updated"`
+	Status      string `json:"status"`
+	Chart       string `json:"chart"`
+	AppVersion  string `json:"app_version"`
+	Description string `json:"description"`
+}
+
+// GetHistory gets the history of a Helm release
+func (c *Client) GetHistory(releaseName, namespace string) ([]HistoryEntry, error) {
+	args := []string{
+		"history",
+		releaseName,
+		"--namespace", namespace,
+		"-o", "json",
+	}
+
+	cmd := exec.Command("helm", args...)
+	cmd.Env = os.Environ()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderr.String(), "not found") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("helm history failed: %s, stderr: %s", err, stderr.String())
+	}
+
+	var history []HistoryEntry
+	if err := json.Unmarshal(stdout.Bytes(), &history); err != nil {
+		return nil, fmt.Errorf("failed to parse helm history: %s", err)
+	}
+
+	return history, nil
 }

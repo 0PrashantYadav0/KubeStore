@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,28 +23,48 @@ func main() {
 	port := getEnv("PORT", "8080")
 	chartPath := getEnv("HELM_CHART_PATH", "./charts/medusa-store")
 	ingressDomain := getEnv("INGRESS_DOMAIN", "127.0.0.1.nip.io")
-	maxStores := 10 // Default max stores
+	valuesFile := getEnv("HELM_VALUES_FILE", "")
+	storeDBPath := getEnv("STORE_DB_PATH", "./data/kubestore.db")
+
+	maxStoresTotal := getEnvInt("MAX_STORES_TOTAL", 50)
+	maxStoresPerUser := getEnvInt("MAX_STORES_PER_USER", 5)
+	provisionWorkers := getEnvInt("PROVISION_WORKERS", 3)
 
 	// Convert to absolute path - try multiple locations
 	chartPath = resolveChartPath(chartPath)
+	valuesFile = resolveOptionalFile(valuesFile)
 
 	log.Printf("Starting KubeStore Backend")
 	log.Printf("  Port: %s", port)
 	log.Printf("  Helm Chart: %s", chartPath)
 	log.Printf("  Ingress Domain: %s", ingressDomain)
+	if valuesFile != "" {
+		log.Printf("  Helm Values: %s", valuesFile)
+	}
+	log.Printf("  Store DB: %s", storeDBPath)
 
 	// Initialize components
-	repo := repository.NewInMemoryRepository()
+	var repo repository.StoreRepository
+	if boltRepo, err := repository.NewBoltRepository(storeDBPath); err == nil {
+		repo = boltRepo
+		defer boltRepo.Close()
+	} else {
+		log.Printf("Warning: failed to open store DB (%v); falling back to in-memory repo", err)
+		repo = repository.NewInMemoryRepository()
+	}
 
 	helmClient := helm.NewClient(helm.Config{
 		ChartPath:     chartPath,
 		IngressDomain: ingressDomain,
+		ValuesFile:    valuesFile,
 	})
 
 	storeService := services.NewStoreService(repo, helmClient, services.Config{
-		MaxStores:     maxStores,
-		IngressDomain: ingressDomain,
-		ChartPath:     chartPath,
+		MaxStoresTotal:   maxStoresTotal,
+		MaxStoresPerUser: maxStoresPerUser,
+		ProvisionWorkers: provisionWorkers,
+		IngressDomain:    ingressDomain,
+		ChartPath:        chartPath,
 	})
 
 	handler := api.NewHandler(storeService)
@@ -95,6 +117,18 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+func getEnvInt(key string, defaultValue int) int {
+	raw := getEnv(key, "")
+	if raw == "" {
+		return defaultValue
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultValue
+	}
+	return v
+}
+
 // resolveChartPath finds and returns absolute path to chart
 func resolveChartPath(chartPath string) string {
 	// Try the provided path first
@@ -122,4 +156,18 @@ func resolveChartPath(chartPath string) string {
 
 	log.Println("  Warning: Could not locate Helm chart")
 	return chartPath
+}
+
+func resolveOptionalFile(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		if _, err := os.Stat(abs); err == nil {
+			return abs
+		}
+	}
+	// Leave as-is (Helm will error with a clear message if not found).
+	return p
 }
