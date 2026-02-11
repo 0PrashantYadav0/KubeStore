@@ -46,9 +46,19 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	cd $(BACKEND_DIR) && $(GOBUILD) -o ../$(BUILD_DIR)/$(BINARY_NAME) ./cmd/server
 
-## run: Run the backend locally
+## run: Run the Go backend server
 run:
-	@echo "🚀 Starting backend server..."
+	@echo "🚀 Starting Go backend server..."
+	cd $(BACKEND_DIR) && HELM_VALUES_FILE=../charts/medusa-store/values-local.yaml STORE_DB_PATH=../data/kubestore.db go run ./cmd/server
+
+## run-dev: Run Go backend with auto-reload (requires air)
+run-dev:
+	@echo "🚀 Starting Go backend (dev mode)..."
+	cd $(BACKEND_DIR) && go run ./cmd/server
+
+## run-binary: Run the compiled Go binary
+run-binary:
+	@echo "🚀 Starting Go backend server..."
 	cd $(BACKEND_DIR) && $(GOCMD) run ./cmd/server
 
 ## test: Run all tests
@@ -71,8 +81,36 @@ clean:
 # Docker
 # =====================
 
-## docker-build: Build Docker image
-docker-build:
+## docker-build: Build platform images only (backend + dashboard)
+docker-build: docker-build-platform docker-build-dashboard
+	@echo "✅ Platform images built!"
+
+## docker-build-all: Build platform + engine images (Medusa + storefront)
+docker-build-all: docker-build-platform docker-build-dashboard docker-build-medusa docker-build-storefront
+	@echo "✅ Platform + engine images built!"
+
+## docker-build-platform: Build platform Go backend Docker image
+docker-build-platform:
+	@echo "🐳 Building platform backend image..."
+	docker build -t kubestore-backend:latest -f ./backend/Dockerfile .
+
+## docker-build-dashboard: Build React dashboard image (nginx)
+docker-build-dashboard:
+	@echo "🐳 Building dashboard image..."
+	docker build -t kubestore-dashboard:latest -f ./frontend/Dockerfile ./frontend
+
+## docker-build-medusa: Build MedusaJS backend Docker image
+docker-build-medusa:
+	@echo "🐳 Building MedusaJS backend image..."
+	docker build -t kubestore-medusa:latest -f ./engines/medusa/medusa-starter-default/Dockerfile ./engines/medusa/medusa-starter-default
+
+## docker-build-storefront: Build Next.js storefront Docker image
+docker-build-storefront:
+	@echo "🐳 Building Next.js storefront image..."
+	docker build -t kubestore-storefront:latest -f ./engines/medusa/nextjs-starter-medusa/Dockerfile ./engines/medusa/nextjs-starter-medusa
+
+## docker-build-legacy: Build old backend Docker image
+docker-build-legacy:
 	@echo "🐳 Building Docker image..."
 	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) -f $(BACKEND_DIR)/Dockerfile $(BACKEND_DIR)
 
@@ -104,7 +142,11 @@ kind-delete:
 ## kind-load: Load Docker images into Kind
 kind-load:
 	@echo "📥 Loading images into Kind..."
-	kind load docker-image $(DOCKER_IMAGE):$(DOCKER_TAG) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image kubestore-backend:latest --name $(KIND_CLUSTER_NAME)
+	kind load docker-image kubestore-medusa:latest --name $(KIND_CLUSTER_NAME)
+	kind load docker-image kubestore-storefront:latest --name $(KIND_CLUSTER_NAME)
+	kind load docker-image kubestore-dashboard:latest --name $(KIND_CLUSTER_NAME)
+	@echo "✅ All images loaded!"
 
 # =====================
 # Ingress

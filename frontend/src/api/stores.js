@@ -8,13 +8,13 @@ export async function fetchStores() {
     return response.json();
 }
 
-export async function createStore(name) {
+export async function createStore(name, engine = "medusa") {
     const response = await fetch(`${API_BASE}/stores`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, engine }),
     });
 
     if (!response.ok) {

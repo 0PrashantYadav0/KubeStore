@@ -7,6 +7,7 @@ function App() {
     const [error, setError] = useState(null)
     const [showModal, setShowModal] = useState(false)
     const [newStoreName, setNewStoreName] = useState('')
+    const [newStoreEngine, setNewStoreEngine] = useState('medusa')
     const [creating, setCreating] = useState(false)
     const [deletingId, setDeletingId] = useState(null)
 
@@ -35,8 +36,9 @@ function App() {
 
         setCreating(true)
         try {
-            await createStore(newStoreName.trim())
+            await createStore(newStoreName.trim(), newStoreEngine)
             setNewStoreName('')
+            setNewStoreEngine('medusa')
             setShowModal(false)
             loadStores()
         } catch (err) {
@@ -151,6 +153,12 @@ function App() {
                                 </div>
 
                                 <div className="store-details">
+                                    {store.engine && (
+                                        <div className="store-detail">
+                                            <span className="store-detail-label">Engine</span>
+                                            <span className="store-detail-value">{store.engine}</span>
+                                        </div>
+                                    )}
                                     <div className="store-detail">
                                         <span className="store-detail-label">Created</span>
                                         <span className="store-detail-value">
@@ -167,6 +175,19 @@ function App() {
                                                 className="store-url"
                                             >
                                                 {store.url}
+                                            </a>
+                                        </div>
+                                    )}
+                                    {store.admin_url && (
+                                        <div className="store-detail">
+                                            <span className="store-detail-label">Admin</span>
+                                            <a
+                                                href={store.admin_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="store-url"
+                                            >
+                                                {store.admin_url}
                                             </a>
                                         </div>
                                     )}
@@ -231,6 +252,20 @@ function App() {
                                     required
                                     autoFocus
                                 />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label" htmlFor="storeEngine">
+                                    Engine
+                                </label>
+                                <select
+                                    id="storeEngine"
+                                    className="form-input"
+                                    value={newStoreEngine}
+                                    onChange={(e) => setNewStoreEngine(e.target.value)}
+                                >
+                                    <option value="medusa">Medusa</option>
+                                    <option value="woocommerce">WooCommerce (stub)</option>
+                                </select>
                             </div>
                             <div className="modal-actions">
                                 <button

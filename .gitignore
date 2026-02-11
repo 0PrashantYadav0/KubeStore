@@ -1,4 +1,9 @@
 node_modules
+**/node_modules
 vendor
 .env
 build
+data
+**/.next
+**/dist
+**/.yarn/cache
