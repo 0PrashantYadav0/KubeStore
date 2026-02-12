@@ -11,13 +11,11 @@ RUN npm install --prefer-offline
 # ── Source layer ──
 COPY . .
 
-# ── Build backend TypeScript only (admin served by Vite at runtime) ──
-RUN npm run build
+RUN npm run build && mkdir -p public && cp -r .medusa/server/public/admin public/admin
 
 EXPOSE 9000
 
 # On startup: migrate, sync, create admin (skip if exists), seed (skip if done), then start.
-# medusa start in NODE_ENV=development uses Vite for admin UI.
 CMD ["sh", "-c", "\
   npx medusa db:migrate && \
   npx medusa db:sync-links && \

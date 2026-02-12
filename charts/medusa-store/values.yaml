@@ -19,14 +19,14 @@ medusa:
   resources:
     requests:
       memory: "512Mi"
-      cpu: "200m"
+      cpu: "250m"
     limits:
-      memory: "1Gi"
+      memory: "1536Mi"
       cpu: "1"
   
   # Environment variables
   env:
-    NODE_ENV: "development"
+    NODE_ENV: "production"
     MEDUSA_ADMIN_ONBOARDING_TYPE: "nextjs"
     STORE_CORS: "*"
     ADMIN_CORS: "*"

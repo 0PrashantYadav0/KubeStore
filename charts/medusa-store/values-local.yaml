@@ -8,7 +8,7 @@ medusa:
   image:
     pullPolicy: Never
   env:
-    NODE_ENV: "development"
+    NODE_ENV: "production"
     STORE_CORS: "*"
     ADMIN_CORS: "*"
 
