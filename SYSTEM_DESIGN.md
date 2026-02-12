@@ -1,306 +1,279 @@
-# System Design & Tradeoffs
+# System Design & Tradeoffs — KubeStore
 
-## Architecture Overview
-
-KubeStore is a **store provisioning platform** that deploys MedusaJS e-commerce stores on Kubernetes. The same Helm charts work on local Kind clusters and production VPS (k3s).
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      KubeStore Platform                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────────┐        ┌─────────────────────────────────┐ │
-│  │   React         │        │     Go Backend                  │ │
-│  │   Dashboard     │◀──────▶│     (chi)                       │ │
-│  │   (Vite)        │  REST  │                                 │ │
-│  └─────────────────┘   API  │  ┌───────────────────────────┐  │ │
-│                             │  │  Rate Limiting            │  │ │
-│                             │  │  - 100 req/15min global   │  │ │
-│                             │  │  - 3 stores/min per user  │  │ │
-│                             │  │  - 5 stores max per user  │  │ │
-│                             │  └───────────────────────────┘  │ │
-│                             │                                 │ │
-│                             │  ┌───────────────────────────┐  │ │
-│                             │  │  Audit Logging            │  │ │
-│                             │  │  - All CRUD operations    │  │ │
-│                             │  │  - Security events        │  │ │
-│                             │  └───────────────────────────┘  │ │
-│                             │                                 │ │
-│                             │  ┌───────────────────────────┐  │ │
-│                             │  │  Helm Client              │  │ │
-│                             │  │  - Install/Uninstall      │  │ │
-│                             │  │  - Upgrade/Rollback       │  │ │
-│                             │  └───────────────────────────┘  │ │
-│                             └─────────────────────────────────┘ │
-│                                           │                     │
-│                                           ▼                     │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │              Kubernetes Cluster (Kind / k3s)               │ │
-│  │                                                            │ │
-│  │   ┌─────────────────────────────────────────────────────┐  │ │
-│  │   │ Namespace: store-{id}                               │  │ │
-│  │   │                                                     │  │ │
-│  │   │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │  │ │
-│  │   │  │ MedusaJS    │  │ PostgreSQL  │  │ Redis       │  │  │ │
-│  │   │  │ Deployment  │  │ StatefulSet │  │ Deployment  │  │  │ │
-│  │   │  │ (non-root)  │  │ + PVC       │  │             │  │  │ │
-│  │   │  └─────────────┘  └─────────────┘  └─────────────┘  │  │ │
-│  │   │                                                     │  │ │
-│  │   │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │  │ │
-│  │   │  │ ResourceQ   │  │ LimitRange  │  │ NetworkPol  │  │  │ │
-│  │   │  │ 10 pods max │  │ Defaults    │  │ Deny-by-def │  │  │ │
-│  │   │  └─────────────┘  └─────────────┘  └─────────────┘  │  │ │
-│  │   │                                                     │  │ │
-│  │   │  ┌─────────────┐  ┌─────────────┐                   │  │ │
-│  │   │  │ RBAC        │  │ Secrets     │                   │  │ │
-│  │   │  │ ServiceAcct │  │ DB creds    │                   │  │ │
-│  │   │  └─────────────┘  └─────────────┘                   │  │ │
-│  │   └─────────────────────────────────────────────────────┘  │ │
-│  │                                                            │ │
-│  │   Ingress: store-{id}.127.0.0.1.nip.io                    │ │
-│  └────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
+> Short design note covering architecture choices, idempotency/failure handling, cleanup approach, and what changes for production.
 
 ---
 
-## Component Responsibilities
+## 1. Architecture Choice
 
-| Component | Responsibility |
-|-----------|----------------|
-| **React Dashboard** | User interface for managing stores |
-| **Go Backend** | REST API, orchestration, rate limiting |
-| **Helm Client** | Kubernetes deployments via Helm charts |
-| **Kube Client** | Direct kubectl operations (namespaces, events) |
-| **MedusaJS** | E-commerce backend per store |
-| **PostgreSQL** | Persistent database per store |
-| **Redis** | Cache and sessions per store |
+### Why this stack?
 
----
+| Layer | Choice | Rationale |
+|-------|--------|-----------|
+| **Orchestration API** | Go + chi | Lightweight, fast startup, single binary, first-class Kubernetes client support |
+| **Dashboard** | React + Vite | Fast dev iteration, simple SPA for CRUD + observability |
+| **Store metadata** | BoltDB (embedded) | Zero operational overhead, survives backend restarts, no extra infra |
+| **Packaging** | Helm (mandatory) | Templated K8s manifests, values-based local/prod switching, upgrade/rollback built-in |
+| **E-commerce (primary)** | MedusaJS v2 | Modern headless commerce, PostgreSQL-backed, API-first, separate admin + storefront |
+| **E-commerce (secondary)** | WooCommerce | WordPress + MariaDB, well-known, proves multi-engine architecture |
+| **Ingress** | NGINX Ingress + nip.io | Works on Kind out of the box, same controller on k3s |
 
-## End-to-End Flow
+### Multi-engine architecture
 
-### Store Creation
+The platform is engine-agnostic. Each engine is a separate Helm chart:
+
 ```
-1. User clicks "Create New Store" in Dashboard
-2. POST /api/stores → Backend validates & rate limits
-3. Backend generates store ID and creates store record (PROVISIONING)
-4. Async: Helm install creates namespace + resources
-5. Async: Wait for Kubernetes endpoints to be ready
-6. Async: Run 10 consecutive health checks
-7. Async: Wait 5s stability delay
-8. Store marked READY with URL
+CreateStore(name, engine) ──►  Resolve chart path ──►  helm install ──►  Wait for health ──► Bootstrap (engine-specific)
+                                    │                                         │
+                         medusa → charts/medusa-store/             /health (Medusa)
+                         woocommerce → charts/woocommerce-store/   /wp-login.php (WordPress)
 ```
 
-### Store Deletion
+Adding a new engine (e.g., Shopify self-hosted) requires only:
+1. A new Helm chart in `charts/`
+2. A health endpoint mapping in `store_service.go`
+3. A chart path in the backend config
+
+### End-to-end flow
+
 ```
-1. User clicks "Delete" in Dashboard
-2. DELETE /api/stores/:id → Backend validates
-3. Helm uninstall removes release
-4. kubectl delete namespace removes all resources
-5. Store removed from records
+User clicks "Create Store"
+         │
+    ┌────▼────┐
+    │ POST    │ ── rate limit check ── per-user quota check ── idempotency check
+    │ /stores │
+    └────┬────┘
+         │ Store record created (status: provisioning)
+         │ Audit log entry written
+         │
+    ┌────▼──────────┐
+    │ Worker Pool   │ (bounded goroutine pool, default 3 workers)
+    │ provisionStore│
+    └────┬──────────┘
+         │ 1. Create namespace: store-{id}
+         │ 2. helm install with engine-specific chart
+         │ 3. Poll health endpoint (up to 10 min)
+         │ 4. Bootstrap (Medusa: fetch publishable API key, inject into storefront)
+         │ 5. Update store → status: ready, set URL + admin URL
+         │
+    ┌────▼────────┐
+    │ Dashboard   │ polls /api/stores every 5s → user sees status change
+    └─────────────┘
 ```
 
 ---
 
-## Isolation & Multi-Tenancy
+## 2. Isolation Model (Namespace-per-Store)
 
-### Namespace Isolation
-- Each store runs in its own namespace: `store-{id}`
-- ResourceQuota limits per namespace (10 pods, 10Gi storage)
-- LimitRange sets default resource requests/limits
+Each store gets its own Kubernetes namespace (`store-{id}`) containing:
 
-### Network Isolation
-- **NetworkPolicy: Deny-by-default** for all pods
-- Explicit allows only for required traffic:
-  - Ingress → Medusa (port 9000)
-  - Medusa → PostgreSQL (port 5432)
-  - Medusa → Redis (port 6379)
-  - All pods → DNS
+| Resource | Purpose |
+|----------|---------|
+| **Deployments** | Medusa backend, Next.js storefront, Redis (or) WordPress |
+| **StatefulSet** | PostgreSQL (Medusa) or MariaDB (WooCommerce) with PVC |
+| **Services** | ClusterIP for inter-pod communication |
+| **Ingress** | External hostname: `store-{id}.{domain}` |
+| **Secrets** | DB passwords, JWT secret, admin credentials (auto-generated, stable via `lookup`) |
+| **ConfigMap** | Non-secret configuration |
+| **ResourceQuota** | Max CPU, memory, PVCs, pods per namespace |
+| **LimitRange** | Default requests/limits for any pod in the namespace |
+| **NetworkPolicy** | Deny-by-default ingress/egress with explicit allows |
+| **RBAC** | ServiceAccount + Role + RoleBinding scoped to namespace |
 
-### Resource Isolation
-| Resource | Limit per Store |
-|----------|-----------------|
-| Pods | 10 |
-| Services | 5 |
-| PVCs | 3 |
-| Storage | 10Gi |
-| CPU (requests) | 2 cores |
-| Memory (requests) | 2Gi |
+### Why namespace-per-store?
 
----
-
-## Idempotency & Failure Handling
-
-### Idempotent Store Creation
-- The backend enforces **idempotency per user + store name**:
-  - If the same user retries `POST /api/stores` with the same `name`, the backend returns the existing store instead of creating duplicates.
-- Helm operations are **serialized per store** (install/upgrade/rollback/delete don’t overlap).
-- Provisioning concurrency is bounded with a **worker semaphore** to protect the cluster from spikes.
-
-### Recovery on Restart
-- Store state is persisted in a **local BoltDB** file (`STORE_DB_PATH`) so a backend restart doesn’t lose store records.
-- A reconciliation loop periodically checks Kubernetes/Helm state for provisioning stores and marks them Ready/Failed accordingly.
-
-### Health Check Robustness
-- Requires **10 consecutive** successful health checks
-- 2-second intervals between checks
-- 5-second stability delay after passing
-- 120-second timeout total
+- **Blast-radius control**: A misbehaving store cannot affect others.
+- **ResourceQuota**: Prevents any single store from starving the cluster.
+- **NetworkPolicy**: Deny-by-default means stores cannot communicate with each other.
+- **Clean teardown**: `kubectl delete namespace store-{id}` removes everything atomically.
+- **Secrets isolation**: Each namespace has its own secrets; no cross-store leakage.
 
 ---
 
-## Security Posture
+## 3. Idempotency & Failure Handling
 
-### Secret Handling
-- All secrets in Kubernetes Secrets (not in source code)
-- Database and JWT/Cookie secrets are **generated per store** and **kept stable across Helm upgrades** using Helm `lookup` on the existing Secret.
-- A one-time **bootstrap Job** creates a **publishable API key** token and patches it into the Secret so the Next.js storefront can call `/store` APIs.
-- Secrets are mounted as environment variables
+### Store creation idempotency
 
-### RBAC / Least Privilege
-- Each store has its own ServiceAccount
-- Role allows only: pods, services, configmaps (read-only)
-- No cluster-wide permissions
+1. **User+name deduplication**: Creating a store with the same name by the same user returns the existing store instead of creating a duplicate.
+2. **Helm idempotency**: If a Helm release already exists (e.g., from a previous partial provision), the system detects it and continues from where it left off.
+3. **Stable secrets**: Secrets use Helm `lookup` — if a secret already exists in the namespace, its values are reused rather than regenerated. This prevents credential drift on retries.
+4. **Seed script idempotency**: The Medusa seed script checks for existing products before seeding, preventing duplicate data.
 
-### What's Exposed Publicly
-- **Public**: Ingress (store URLs)
-- **Internal**: PostgreSQL, Redis (no external access)
-- **Backend**: Rate-limited, input-validated
+### Failure recovery
 
-### Container Hardening
-- Non-root user where possible
-- Read-only root filesystem (where applicable)
-- Resource limits prevent resource exhaustion
+| Failure scenario | Recovery mechanism |
+|-----------------|-------------------|
+| Backend restarts mid-provision | BoltDB persists store records; reconciliation loop on startup detects `provisioning` stores and retries |
+| Helm install fails | Store marked `failed` with error message; user can retry or delete |
+| Health check times out | Store marked `failed` with timeout reason; partial resources cleaned up on delete |
+| Medusa bootstrap fails | Non-fatal — store is still usable, key can be injected manually |
+| OOMKilled pod | Kubernetes restarts via `restartPolicy: Always`; readiness probes prevent traffic until ready |
 
----
+### Cleanup guarantees
 
-## Horizontal Scaling Plan
+Deleting a store:
+1. Calls `helm uninstall` to remove the release
+2. Deletes the namespace (which cascades to all resources including PVCs)
+3. Removes the store record from BoltDB
+4. Writes an audit log entry
 
-### What Scales Horizontally
-| Component | Scaling Approach |
-|-----------|------------------|
-| Dashboard | Static files, CDN-compatible |
-| Backend | Horizontally scalable after swapping BoltDB for an external DB + leader election; platform chart includes optional HPA. Default deployment uses 1 replica with BoltDB. |
-| Medusa | Per-store, independent scaling |
-
-### Provisioning Throughput
-- Rate limiter: 3 stores/minute/user
-- Concurrent provisioning via bounded worker pool (configurable `PROVISION_WORKERS`)
-- Helm operations serialized per store
-
-### Stateful Constraints
-- PostgreSQL: StatefulSet with PVC (vertical scaling only)
-- Redis: Single replica (can be Redis Cluster)
-- Demo data + publishable key bootstrapping: one-time Helm hook Job per store
+Even if `helm uninstall` fails, the namespace deletion acts as a safety net to remove all resources.
 
 ---
 
-## Abuse Prevention
+## 4. Security Posture
 
-### Rate Limiting
-| Limit | Value |
-|-------|-------|
-| Global requests | 100/15 min |
-| Store creation | 3/min/user |
-| Max stores per user | 5 |
+### Secret handling
+- No secrets in source code or Helm values files
+- Secrets auto-generated at install time using `randAlphaNum` + Helm `lookup` for stability
+- JWT secret, cookie secret, DB passwords, admin credentials all generated per-store
+- Production: integrate with external secret managers (Vault, AWS Secrets Manager)
 
-### Blast Radius Controls
-- Namespace isolation limits impact
-- ResourceQuota prevents resource exhaustion
-- Provisioning timeout (5 minutes max)
+### RBAC (least privilege)
+- Each store namespace has a dedicated ServiceAccount
+- Role scoped to the namespace with only required verbs (get, list, watch on pods/services)
+- No cluster-wide permissions for store workloads
+- The platform backend runs with broader permissions (required for namespace creation + Helm operations)
 
-### Audit Trail
-```json
-{
-  "action": "STORE_CREATED",
-  "userId": "192.168.1.100",
-  "storeId": "s1234567",
-  "storeName": "my-shop",
-  "timestamp": "2026-02-09T12:00:00.000Z"
-}
-```
+### Network hardening
+- **NetworkPolicy deny-by-default** on every store namespace
+- Explicit ingress allows: only from ingress controller to web-facing pods
+- Explicit egress allows: only required inter-pod traffic + DNS + external HTTPS (for image CDN)
+- PostgreSQL/MariaDB only accept connections from the application pod
+
+### Container hardening
+- Containers run as non-root where possible (`runAsNonRoot: true`, `runAsUser: 1000`)
+- Read-only root filesystem where possible
+- Resource limits on all containers (prevents runaway resource consumption)
 
 ---
 
-## Local vs Production (Helm Values)
+## 5. Abuse Prevention
 
-| Setting | Local (Kind) | Production (k3s/VPS) |
-|---------|--------------|----------------------|
-| Ingress domain | `127.0.0.1.nip.io` | `yourdomain.com` |
-| TLS | Disabled | `cert-manager` |
-| Storage class | (default) | `local-path` |
-| Image pull policy | `Never` | `IfNotPresent` |
-| Replicas | 1 | 2+ |
-| Resources | Minimal | Production-sized |
-| Secrets | Helm values | External secrets |
+| Control | Implementation |
+|---------|----------------|
+| **IP-based rate limiting** | Token bucket middleware (10 req/s burst, 5 req/s sustained) |
+| **Per-user store quota** | Default max 5 stores per user (configurable via `MAX_STORES_PER_USER`) |
+| **Global store limit** | Default max 50 total stores (configurable via `MAX_STORES_TOTAL`) |
+| **Provisioning timeout** | 10-minute health check timeout; store marked `failed` on expiry |
+| **ResourceQuota per store** | Limits CPU, memory, PVCs, and pod count per namespace |
+| **Audit trail** | Every create/delete action logged with user, IP, timestamp, and result |
 
-### Production Deployment
+---
+
+## 6. Observability
+
+### Dashboard features
+- **Store status**: Real-time provisioning / ready / failed with colour-coded indicators
+- **Health checks**: Per-component health (Medusa, PostgreSQL, Redis, Storefront or WordPress, MariaDB)
+- **Pod viewer**: Live pod status, restarts, CPU/memory usage
+- **Log viewer**: Per-component log streaming (selectable: medusa, storefront, postgresql, redis, wordpress, mariadb)
+- **Events**: Kubernetes events for the store namespace
+- **Helm history**: Release revisions, timestamps, status
+- **Failure reasons**: Clear error messages when provisioning fails
+
+### Metrics (JSON + Prometheus)
+- `GET /api/metrics` — JSON: total stores, by status, by engine, provisioning durations
+- `GET /metrics` — Prometheus format for scraping
+
+### Audit log
+- `GET /api/audit` — Full action log (create, delete, upgrade, rollback, restart)
+
+---
+
+## 7. Horizontal Scaling Plan
+
+### What scales horizontally
+
+| Component | Scaling approach |
+|-----------|-----------------|
+| **React Dashboard** | Stateless — scale replicas behind a load balancer |
+| **Go Backend** | Stateless API layer scales horizontally; BoltDB replaced with PostgreSQL/Redis for shared state |
+| **Provisioning workers** | Bounded worker pool (`PROVISION_WORKERS` env var); increase workers per replica |
+| **NGINX Ingress** | DaemonSet on all nodes (default in production) |
+
+### Stateful constraints
+
+| Component | Constraint | Mitigation |
+|-----------|-----------|------------|
+| BoltDB | Single-writer, embedded | Replace with PostgreSQL for multi-replica backend |
+| PostgreSQL (per store) | Single-instance StatefulSet | Promote to HA (Patroni/PGO) in production values |
+| Helm operations | Must be serialized per release | Worker pool ensures no concurrent operations on same store |
+
+### Provisioning throughput
+
+- Default: 3 concurrent provisions (`PROVISION_WORKERS=3`)
+- Each provision is independent (separate namespace, separate Helm release)
+- Cluster resources are the bottleneck, not the backend
+- ResourceQuotas prevent any single store from starving others
+
+---
+
+## 8. What Changes for Production
+
+### Helm values differences
+
+| Dimension | Local (Kind) | Production (k3s / VPS) |
+|-----------|-------------|------------------------|
+| **Domain** | `127.0.0.1.nip.io` | `stores.yourdomain.com` |
+| **TLS** | Disabled | cert-manager + Let's Encrypt |
+| **Image pull** | `pullPolicy: Never` (pre-loaded) | `IfNotPresent` (from registry) |
+| **Replicas** | 1 per component | 2+ for Medusa, storefront |
+| **Resources** | Minimal requests/limits | Production-sized (2Gi+ memory) |
+| **Storage class** | Default (rancher local-path) | Provisioner-backed (EBS, Ceph, etc.) |
+| **Secrets** | Auto-generated (Helm lookup) | External secrets manager (Vault) |
+| **Ingress controller** | Kind-specific NodePort | Cloud LB / k3s Traefik / NGINX |
+| **Monitoring** | JSON metrics endpoint | Prometheus + Grafana stack |
+
+### Upgrade & rollback approach
+
 ```bash
-# Deploy to k3s VPS
-helm install my-store ./charts/medusa-store \
-  -f charts/medusa-store/values-production.yaml \
-  --set ingress.baseDomain=stores.mydomain.com \
-  --set postgresql.password=$(openssl rand -base64 32)
+# Upgrade a store to new image version
+curl -X POST http://localhost:8080/api/stores/{id}/upgrade \
+  -H 'Content-Type: application/json' \
+  -d '{"values":{"medusa.image.tag":"v2.1"}}'
+
+# Rollback to previous revision
+curl -X POST http://localhost:8080/api/stores/{id}/rollback \
+  -H 'Content-Type: application/json' \
+  -d '{"revision":1}'
+
+# View release history
+curl http://localhost:8080/api/stores/{id}/history
 ```
+
+Helm maintains a full revision history per release. Rollback is atomic — if the new revision fails health checks, the old revision's pods remain running until explicitly replaced.
 
 ---
 
-## Upgrade & Rollback
+## 9. Tradeoffs & Future Improvements
 
-### Upgrade a Store
-```bash
-# Via API
-POST /api/stores/:id/upgrade
-{ "valuesFile": "values-v2.yaml" }
-
-# Via Helm directly
-helm upgrade store-id ./charts/medusa-store \
-  --namespace store-{id} \
-  --set medusa.image.tag=v2.0.0
-```
-
-### Rollback a Store
-```bash
-# Via API
-POST /api/stores/:id/rollback
-{ "revision": 1 }
-
-# Via Helm directly
-helm rollback store-id 1 --namespace store-{id}
-```
-
-### Release History
-```bash
-GET /api/stores/:id/history
-helm history store-id --namespace store-{id}
-```
+| Decision | Tradeoff | Future improvement |
+|----------|----------|-------------------|
+| BoltDB for metadata | Simple, zero-ops, but single-writer | Migrate to PostgreSQL for multi-replica backend |
+| Helm CLI wrapper | Shell-out to Helm binary; simple but less control | Use Helm SDK (Go library) for programmatic control |
+| `nip.io` for local DNS | No `/etc/hosts` edits needed; depends on external DNS | Support custom domains with TLS in production |
+| Single-stage Docker builds | Larger images but simpler, fewer layer cache issues | Multi-stage with BuildKit cache mounts |
+| Monorepo structure | Everything in one repo for assessment; harder to version independently | Split engines into separate repos with Git submodules or a registry |
+| Manual Payment (Medusa) | Simplest checkout for assessment demo | Stripe test mode integration |
+| WordPress without WooCommerce pre-installed | WooCommerce must be activated manually after deploy | Bake WooCommerce + theme into a custom image |
 
 ---
 
-## Tradeoffs & Design Decisions
+## 10. Readiness for Round 2 (Gen AI Orchestration)
 
-### 1. Namespace per Store
-**Choice**: Each store gets its own namespace
-**Tradeoff**: More namespaces to manage, but better isolation
-**Reason**: Clean teardown, security boundaries, resource quotas
+The platform's REST API is designed to be called programmatically by an AI orchestration layer:
 
-### 2. Persistent Store State (BoltDB)
-**Choice**: Store records persisted in a local BoltDB file (`STORE_DB_PATH`)
-**Tradeoff**: Single-writer file (default deployment uses 1 backend replica)
-**Reason**: Enables restart recovery + idempotency without needing external infra for Round 1
+- **Structured API**: JSON request/response for all operations
+- **Status polling**: AI agent can poll `/api/stores/{id}` until `status: ready`
+- **Observability APIs**: Health, pods, logs, events — all queryable for AI debugging
+- **Audit trail**: Full action log for AI traceability
+- **Idempotent operations**: Safe to retry (no duplicate resources)
+- **Multi-engine support**: AI can choose `medusa` or `woocommerce` based on requirements
 
-### 3. Helm for Orchestration
-**Choice**: Helm charts over raw manifests
-**Tradeoff**: Helm dependency, learning curve
-**Reason**: Required by assessment, better templating, rollback support
-
-### 4. Health Check Count (10)
-**Choice**: Require 10 consecutive successful checks
-**Tradeoff**: Longer provisioning time
-**Reason**: Eliminates intermittent 503 errors from ingress sync
-
-### 5. NetworkPolicy Deny-by-Default
-**Choice**: Block all traffic, allow explicitly
-**Tradeoff**: More configuration required
-**Reason**: Better security posture, explicit traffic flows
+The architecture is ready for an AI agent to:
+1. Call `POST /api/stores` to create a store
+2. Poll status until ready
+3. Configure the store via Medusa Admin API or WordPress REST API
+4. Verify order placement via API
+5. Clean up via `DELETE /api/stores/{id}`

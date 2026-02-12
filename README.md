@@ -1,253 +1,204 @@
-# KubeStore - Kubernetes Store Provisioning Platform
+# KubeStore — Kubernetes Store Provisioning Platform
 
-> **Urumi AI SDE Internship - Round 1 Assessment**  
-> Kubernetes-native store provisioning with MedusaJS, Go backend, and React dashboard.
-
-## 🎯 Overview
-
-KubeStore is a store provisioning platform that deploys fully-functional MedusaJS e-commerce stores on Kubernetes. The same Helm charts work on local Kind clusters and production VPS (k3s).
-
-### Features
-
-- ✅ **Multi-Store Support** - Provision multiple isolated stores concurrently
-- ✅ **Namespace Isolation** - Each store runs in its own namespace
-- ✅ **End-to-End Orders** - Place orders via MedusaJS storefront
-- ✅ **Clean Teardown** - Delete stores and all resources safely
-- ✅ **Rate Limiting** - Abuse prevention with per-user quotas
-- ✅ **Audit Logging** - Track all actions for compliance
-- ✅ **NetworkPolicies** - Deny-by-default network isolation
-- ✅ **RBAC** - Least-privilege ServiceAccounts
-- ✅ **ResourceQuotas** - Limits per store namespace
-- ✅ **Observability** - Events, metrics, and failure reporting
-- ✅ **Upgrade/Rollback** - Helm revision management
+> **Urumi AI SDE Internship — Round 1: System Design Assessment**
+>
+> A store provisioning platform that deploys fully-functional **MedusaJS** and **WooCommerce** e-commerce stores on Kubernetes. The same Helm charts run identically on a local Kind cluster and a production VPS (k3s), differing only via Helm values.
 
 ---
 
-## 🏗️ Architecture
+## Table of Contents
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────────┐
-│  React Dashboard│───▶│   Go Backend    │───▶│   Kubernetes Cluster    │
-│  (Port 5173)    │    │   (Port 8080)   │    │                         │
-└─────────────────┘    └─────────────────┘    │  ┌─────────────────┐    │
-                              │               │  │ store-{id}      │    │
-                              │ Helm          │  │ ┌─────────────┐ │    │
-                              │ Install       │  │ │ Medusa API  │ │    │
-                              ▼               │  │ │ + Admin     │ │    │
-                       ┌──────────────┐       │  │ └─────────────┘ │    │
-                       │ medusa-store │       │  │ ┌─────────────┐ │    │
-                       │ Helm Chart   │───────│  │ │ PostgreSQL  │ │    │
-                       └──────────────┘       │  │ └─────────────┘ │    │
-                                              │  │ ┌─────────────┐ │    │
-                                              │  │ │ Redis       │ │    │
-                                              │  │ └─────────────┘ │    │
-                                              │  │ ┌─────────────┐ │    │
-                                              │  │ │ Storefront  │ │    │
-                                              │  │ └─────────────┘ │    │
-                                              │  └─────────────────┘    │
-                                              └─────────────────────────┘
-```
+1. [Local Setup Instructions](#-local-setup-instructions)
+2. [Create a Store & Place an Order](#-create-a-store--place-an-order)
+3. [VPS / Production Setup (k3s)](#-vps--production-setup-k3s)
+4. [Architecture Overview](#-architecture-overview)
+5. [Project Structure](#-project-structure)
+6. [API Reference](#-api-reference)
+7. [Makefile Commands](#-makefile-commands)
+8. [Assessment Checklist](#-assessment-checklist)
 
 ---
 
-## 🚀 Quick Start (Local)
+## 🚀 Local Setup Instructions
 
 ### Prerequisites
 
-- Docker Desktop
-- [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
-- [Helm](https://helm.sh/docs/intro/install/)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
-- Go 1.21+ (for backend development)
-- Node.js 18+ (for frontend development)
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Docker Desktop | Latest | Container runtime |
+| [Kind](https://kind.sigs.k8s.io/) | v0.20+ | Local Kubernetes cluster |
+| [Helm](https://helm.sh/) | v3.12+ | Chart-based deployments |
+| [kubectl](https://kubernetes.io/docs/tasks/tools/) | v1.27+ | Cluster interaction |
+| Go | 1.21+ | Backend compilation |
+| Node.js | 18+ | Dashboard dev server |
 
-### 1. Clone & Setup
+### Step 1 — Clone & install dependencies
 
 ```bash
 git clone https://github.com/0prashantyadav0/KubeStore.git
 cd KubeStore
 
-# Build Go backend
-cd backend && go build ./... && cd ..
+# Go backend
+cd backend && go mod download && cd ..
 
-# Install frontend dependencies
+# React dashboard
 cd frontend && npm install && cd ..
 ```
 
-### 2. Create Kind Cluster
+### Step 2 — Create the Kind cluster
 
 ```bash
-# Create cluster with ingress support
-make kind-create
-
-# Install NGINX Ingress Controller
-make ingress-install
-make ingress-wait
+make kind-create          # Creates cluster with ingress-ready port mappings
+make ingress-install      # Deploys NGINX Ingress Controller
+make ingress-wait         # Blocks until the controller pod is ready
 ```
 
-### 3. Build & Load Docker Images
+### Step 3 — Build & load Docker images
 
 ```bash
-# Build all images (platform, medusa, storefront)
-make docker-build
+# Build all images (platform backend, dashboard, MedusaJS, storefront)
+make docker-build-all
 
-# Load into Kind cluster
+# Load them into the Kind cluster (imagePullPolicy: Never)
 make kind-load
 ```
 
-### 4. Start the Platform
+> **WooCommerce** uses official Docker Hub images (`wordpress:6-apache`, `mariadb:11`) with `imagePullPolicy: IfNotPresent`, so no custom build is required.
+
+### Step 4 — Start the platform
 
 ```bash
-# Terminal 1: Start Go backend
+# Terminal 1 — Go backend (runs on :8080)
 make run
 
-# Terminal 2: Start frontend
+# Terminal 2 — React dashboard (runs on :5173)
 cd frontend && npm run dev
 ```
 
-### 5. Open Dashboard
+### Step 5 — Open the dashboard
 
-Open http://localhost:5173 in your browser.
+Navigate to **http://localhost:5173**. You can now create, monitor, and delete stores.
+
+### Local domain approach
+
+Every store gets an Ingress hostname of the form:
+
+```
+store-{storeId}.127.0.0.1.nip.io
+```
+
+[nip.io](https://nip.io) is a wildcard DNS service that resolves any `*.127.0.0.1.nip.io` address back to `127.0.0.1`. Combined with the Kind cluster's host-port mapping (ports 80/443), this gives each store a stable, unique URL without editing `/etc/hosts`.
 
 ---
 
-## 📦 Create a Store & Place an Order
+## 🛒 Create a Store & Place an Order
 
-### Via Dashboard
+### Via the Dashboard (recommended)
 
-1. Click **"Create New Store"**
-2. Enter a store name
-3. Wait for status to change to **"Ready"**
-4. Click the store URL to open the storefront
-5. Add products to cart
-6. Complete checkout (COD/test gateway)
-7. Verify order in admin or API
+1. Click **"Create Store"** and enter a name. Choose **MedusaJS** or **WooCommerce** as the engine.
+2. The status changes through **Provisioning → Ready**.
+3. Click the **Store** / **Admin** links that appear.
 
-**Notes**
-- Each store runs a one-time **bootstrap Job** (Helm hook) that:
-  - seeds demo products + shipping
-  - creates an admin user (email/password stored in the store Secret)
-  - creates a **publishable API key** and injects it into the store Secret for the Next.js storefront
-- To retrieve the admin credentials for a store (local):
+### Via the REST API
 
 ```bash
-STORE_ID="<your_store_id>"
-NS="store-${STORE_ID}"
-SECRET="${STORE_ID}-medusa-store-secrets"
+# Create a MedusaJS store
+curl -s -X POST http://localhost:8080/api/stores \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"my-shop","engine":"medusa"}' | jq
 
-kubectl -n "${NS}" get secret "${SECRET}" -o jsonpath='{.data.ADMIN_EMAIL}' | base64 -d; echo
-kubectl -n "${NS}" get secret "${SECRET}" -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d; echo
+# Create a WooCommerce store
+curl -s -X POST http://localhost:8080/api/stores \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"wp-shop","engine":"woocommerce"}' | jq
+
+# List all stores
+curl -s http://localhost:8080/api/stores | jq
+
+# Delete a store (removes namespace + all resources)
+curl -s -X DELETE http://localhost:8080/api/stores/{storeId}
 ```
 
-### Via API
+### Placing an order end-to-end (MedusaJS)
 
-```bash
-# Create store
-curl -X POST http://localhost:8080/api/stores \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my-shop"}'
+| Step | How |
+|------|-----|
+| 1. Open storefront | Click the **Store** link on the dashboard (redirects to `/us/`) |
+| 2. Browse products | 10 seeded products with Unsplash images are available |
+| 3. Add to cart | Click a product → select size/colour → **Add to Cart** |
+| 4. Checkout | Go to Cart → Checkout → fill shipping address → select **Manual Payment** → **Place Order** |
+| 5. Verify in admin | Open the **Admin** link → log in (credentials in K8s Secret, default `admin@medusa.local`) → Orders section |
 
-# List stores
-curl http://localhost:8080/api/stores
+> **Admin credentials** for a Kubernetes-deployed store:
+> ```bash
+> NS="store-{storeId}"
+> kubectl -n $NS get secret {storeId}-medusa-store-secrets \
+>   -o jsonpath='{.data.ADMIN_EMAIL}' | base64 -d && echo
+> kubectl -n $NS get secret {storeId}-medusa-store-secrets \
+>   -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d && echo
+> ```
 
-# Get store details
-curl http://localhost:8080/api/stores/{storeId}
+### Placing an order end-to-end (WooCommerce)
 
-# Delete store
-curl -X DELETE http://localhost:8080/api/stores/{storeId}
-
-# Upgrade store
-curl -X POST http://localhost:8080/api/stores/{storeId}/upgrade \
-  -H "Content-Type: application/json" \
-  -d '{"values": {"medusa.replicas": "2"}}'
-
-# Rollback store
-curl -X POST http://localhost:8080/api/stores/{storeId}/rollback \
-  -H "Content-Type: application/json" \
-  -d '{"revision": 1}'
-
-# Get store history
-curl http://localhost:8080/api/stores/{storeId}/history
-
-# Get store events
-curl http://localhost:8080/api/stores/{storeId}/events
-
-# Get platform metrics
-curl http://localhost:8080/api/metrics
-
-# Get audit log
-curl http://localhost:8080/api/audit
-```
+| Step | How |
+|------|-----|
+| 1. Open store | Click the **Store** link → WordPress setup wizard completes automatically |
+| 2. Admin | Go to `/wp-admin/` → credentials from K8s Secret |
+| 3. Install WooCommerce | Via Plugins → search "WooCommerce" → Install & Activate |
+| 4. Add product & checkout | Add a sample product, visit shop, add to cart, checkout with COD |
 
 ---
 
-## 🏭 Production Deployment (VPS / k3s)
+## 🏭 VPS / Production Setup (k3s)
 
-### Prerequisites
-
-- VPS with k3s installed
-- Domain pointing to VPS IP
-- (Optional) cert-manager for TLS
-
-### 1. Install k3s
+### 1. Install k3s on the VPS
 
 ```bash
 curl -sfL https://get.k3s.io | sh -
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 ```
 
-### 2. Deploy with Production Values
+### 2. Push images to a registry (or load directly)
 
 ```bash
-# Copy production values and customize
-cp charts/medusa-store/values-production.yaml values-prod.yaml
+# Option A — push to a registry
+docker tag kubestore-medusa:latest ghcr.io/<you>/kubestore-medusa:latest
+docker push ghcr.io/<you>/kubestore-medusa:latest
+# (repeat for kubestore-storefront, kubestore-backend, kubestore-dashboard)
 
-# Edit values-prod.yaml:
-# - Set ingress.baseDomain to your domain
-# - Enable TLS if using cert-manager
+# Option B — import directly on the VPS
+docker save kubestore-medusa:latest | ssh vps 'sudo k3s ctr images import -'
+```
 
-# Deploy a store manually (or via backend)
+### 3. Deploy using production Helm values
+
+```bash
 helm install my-store ./charts/medusa-store \
-  -f values-prod.yaml \
-  --namespace store-mystore \
-  --create-namespace
+  -f charts/medusa-store/values-production.yaml \
+  --set ingress.baseDomain=stores.yourdomain.com \
+  --set store.id=my-store \
+  --set store.name="My Store" \
+  --namespace store-my-store --create-namespace
 ```
 
-### Deploy the Platform (Backend + Dashboard) with Helm (Recommended)
+### What changes between Local and Production (Helm values only)
 
-```bash
-# Copy production values and customize
-cp charts/kubestore-platform/values-production.yaml platform-prod.yaml
-
-# Edit platform-prod.yaml:
-# - Set ingress.host + ingress.baseDomain to your domain
-# - Set stores.baseDomain to your stores wildcard domain (used for store URLs)
-# - (Optional) adjust limits / resources / autoscaling
-
-helm upgrade --install kubestore ./charts/kubestore-platform \
-  -n kubestore-system \
-  --create-namespace \
-  -f platform-prod.yaml
-```
-
-### What Changes for Production
-
-| Setting | Local | Production |
-|---------|-------|------------|
+| Setting | Local (Kind) | Production (k3s / VPS) |
+|---------|--------------|------------------------|
 | `ingress.baseDomain` | `127.0.0.1.nip.io` | `stores.yourdomain.com` |
-| `ingress.tls.enabled` | `false` | `true` |
-| `postgresql.storage.storageClass` | (default) | `local-path` |
+| `ingress.tls.enabled` | `false` | `true` (cert-manager) |
 | `medusa.image.pullPolicy` | `Never` | `IfNotPresent` |
 | `medusa.replicas` | `1` | `2` |
+| `postgresql.storage.storageClass` | (default) | `local-path` |
+| Resource requests/limits | Minimal | Production-sized |
+| Secrets strategy | Helm `lookup` auto-gen | External secrets / Vault |
 
-### TLS with cert-manager
+### Optional: TLS with cert-manager
 
 ```bash
-# Install cert-manager
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
 
-# Create ClusterIssuer for Let's Encrypt
-kubectl apply -f - <<EOF
+kubectl apply -f - <<'EOF'
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -255,7 +206,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: your-email@example.com
+    email: you@example.com
     privateKeySecretRef:
       name: letsencrypt-prod
     solvers:
@@ -265,53 +216,50 @@ spec:
 EOF
 ```
 
----
-
-## 🔒 Security Features
-
-### Network Policies
-- **Deny-by-default** for all pods
-- Explicit allows only for required traffic
-- Store pods can only access their own database
-
-### RBAC
-- Per-store ServiceAccount
-- Read-only access to pods/services
-- No secrets access from pods
-
-### Resource Limits
-- `ResourceQuota` per namespace (10 pods, 10Gi storage)
-- `LimitRange` for default pod resources
-- Memory/CPU limits on all containers
+Then set in `values-production.yaml`:
+```yaml
+ingress:
+  tls:
+    enabled: true
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+```
 
 ---
 
-## 📊 API Endpoints
+## 🏗️ Architecture Overview
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/api/stores` | Create new store |
-| `GET` | `/api/stores` | List all stores |
-| `GET` | `/api/stores/{id}` | Get store details |
-| `DELETE` | `/api/stores/{id}` | Delete store |
-| `POST` | `/api/stores/{id}/upgrade` | Upgrade store |
-| `POST` | `/api/stores/{id}/rollback` | Rollback store |
-| `GET` | `/api/stores/{id}/history` | Get Helm release history |
-| `GET` | `/api/stores/{id}/events` | Get Kubernetes events |
-| `GET` | `/api/metrics` | Platform metrics |
-| `GET` | `/api/audit` | Audit log |
+```
+┌──────────────────┐     REST      ┌──────────────────┐      Helm       ┌───────────────────────────┐
+│  React Dashboard │◄────────────►│  Go Backend       │────install────►│  Kubernetes Cluster       │
+│  (Vite, :5173)   │              │  (chi, :8080)     │                │                           │
+└──────────────────┘              │                    │                │  ┌──────────────────────┐  │
+                                  │  • Rate Limiter    │                │  │ NS: store-{id}       │  │
+                                  │  • Audit Logger    │                │  │                      │  │
+                                  │  • Helm Client     │                │  │ Medusa  Deployment   │  │
+                                  │  • Health Poller   │                │  │ Storefront Deployment│  │
+                                  │  • BoltDB Repo     │                │  │ PostgreSQL SS + PVC  │  │
+                                  └──────────────────┘                │  │ Redis   Deployment   │  │
+                                                                       │  │ Ingress  / Services  │  │
+                                                                       │  │ Secrets / ConfigMap  │  │
+                                                                       │  │ ResourceQuota        │  │
+                                                                       │  │ LimitRange           │  │
+                                                                       │  │ NetworkPolicy        │  │
+                                                                       │  │ RBAC (SA + Role)     │  │
+                                                                       │  └──────────────────────┘  │
+                                                                       └───────────────────────────┘
+```
 
----
+### Component Responsibilities
 
-## 🛡️ Abuse Prevention
-
-| Control | Value |
-|---------|-------|
-| Global rate limit | 100 requests / 15 min |
-| Store creation limit | 3 stores / min / user |
-| Max stores per user | 5 |
-| Provisioning timeout | 5 minutes |
+| Component | Tech | Responsibility |
+|-----------|------|----------------|
+| **Dashboard** | React + Vite | Store CRUD, status monitoring, logs/events/metrics/audit viewer |
+| **Backend** | Go (chi) | REST API, Helm orchestration, health polling, rate limiting, audit logging, metrics |
+| **Helm Client** | Helm CLI wrapper | Install / Upgrade / Rollback / Uninstall per-store releases |
+| **BoltDB** | Embedded KV store | Persistent store records surviving backend restarts |
+| **Medusa Chart** | Helm | MedusaJS + PostgreSQL + Redis + Next.js Storefront per namespace |
+| **WooCommerce Chart** | Helm | WordPress + MariaDB per namespace |
 
 ---
 
@@ -319,103 +267,150 @@ EOF
 
 ```
 KubeStore/
-├── backend/                  # Go backend (API server)
-│   ├── cmd/server/           # Main entry point
+├── backend/                        # Go backend
+│   ├── cmd/server/main.go          # Entry point, config from env vars
 │   ├── internal/
-│   │   ├── api/              # HTTP handlers & router
-│   │   ├── helm/             # Helm client (install/upgrade/rollback)
-│   │   ├── middleware/       # Rate limiting, audit logging
-│   │   ├── models/           # Data models
-│   │   ├── repository/       # Store persistence (BoltDB + in-memory)
-│   │   └── services/         # Store service, metrics
-│   ├── Dockerfile            # Production Docker image
-│   └── go.mod
-├── frontend/                 # React dashboard
-│   ├── src/
-│   │   ├── App.jsx           # Main component
-│   │   └── api/              # API client
-│   └── package.json
+│   │   ├── api/                    # HTTP handlers + chi router
+│   │   ├── helm/                   # Helm CLI wrapper (install/upgrade/rollback)
+│   │   ├── middleware/             # Rate limiting + audit logging
+│   │   ├── models/                 # Store model, errors, request/response types
+│   │   ├── repository/            # BoltDB + in-memory repo
+│   │   └── services/              # Store lifecycle, metrics, health, pods, logs
+│   └── Dockerfile
+├── frontend/                       # React dashboard
+│   ├── src/App.jsx                 # Main component (stores, metrics, audit tabs)
+│   ├── src/api/stores.js           # API client
+│   └── Dockerfile                  # Nginx-based production image
 ├── charts/
-│   └── medusa-store/         # Helm chart for stores
-│       ├── templates/
-│       │   ├── medusa-deployment.yaml
-│       │   ├── storefront-deployment.yaml
-│       │   ├── postgresql-statefulset.yaml
-│       │   ├── redis-deployment.yaml
-│       │   ├── ingress.yaml
-│       │   ├── networkpolicy.yaml
-│       │   ├── rbac.yaml
-│       │   ├── resourcequota.yaml
-│       │   └── limitrange.yaml
-│       ├── values.yaml           # Chart defaults
-│       ├── values-local.yaml     # Local overrides (Kind)
-│       └── values-production.yaml  # VPS values (k3s)
-│   └── kubestore-platform/   # Helm chart for platform (backend + dashboard)
-├── engines/                  # Store engines (pluggable)
+│   ├── medusa-store/               # Per-store MedusaJS Helm chart
+│   │   ├── templates/              # 12 templates (deployment, statefulset, ingress, etc.)
+│   │   ├── values.yaml             # Local defaults
+│   │   ├── values-local.yaml       # Kind-specific overrides
+│   │   └── values-production.yaml  # VPS / k3s production values
+│   ├── woocommerce-store/          # Per-store WooCommerce Helm chart
+│   │   ├── templates/              # 9 templates (wordpress, mariadb, ingress, etc.)
+│   │   ├── values.yaml             # Local defaults
+│   │   └── values-production.yaml  # VPS / k3s production values
+│   └── kubestore-platform/         # Platform chart (backend + dashboard)
+├── engines/
 │   └── medusa/
-│       ├── medusa-starter-default/   # Medusa v2 backend (seeded)
-│       └── nextjs-starter-medusa/    # Next.js v2 storefront
+│       ├── medusa-starter-default/ # MedusaJS v2 backend (Dockerfile, seed, config)
+│       └── nextjs-starter-medusa/  # Next.js v15 storefront (Dockerfile, middleware)
 ├── scripts/
-│   └── kind-config.yaml      # Kind cluster config
-├── Makefile                  # Build automation
-├── SYSTEM_DESIGN.md          # Architecture doc
-└── README.md                 # This file
+│   └── kind-config.yaml            # Kind cluster config with port mappings
+├── Makefile                        # Build automation (30+ targets)
+├── README.md                       # This file
+└── SYSTEM_DESIGN.md                # Architecture & tradeoffs document
 ```
+
+---
+
+## 📊 API Reference
+
+### Store Lifecycle
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/stores` | Create store `{"name":"...","engine":"medusa\|woocommerce"}` |
+| `GET` | `/api/stores` | List all stores (sorted by creation time) |
+| `GET` | `/api/stores/{id}` | Get single store |
+| `DELETE` | `/api/stores/{id}` | Delete store + namespace + all resources |
+
+### Operations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/stores/{id}/upgrade` | Helm upgrade with new values |
+| `POST` | `/api/stores/{id}/rollback` | Helm rollback to revision `{"revision":1}` |
+| `POST` | `/api/stores/{id}/restart` | Restart all pods in the store |
+| `GET` | `/api/stores/{id}/health` | Live health check (engine-aware) |
+| `GET` | `/api/stores/{id}/pods` | Pod status + CPU/memory usage |
+| `GET` | `/api/stores/{id}/logs?component=medusa&lines=100` | Component logs |
+| `GET` | `/api/stores/{id}/events` | Kubernetes events |
+| `GET` | `/api/stores/{id}/history` | Helm release history |
+
+### Platform
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Backend health check |
+| `GET` | `/metrics` | Prometheus-format metrics |
+| `GET` | `/api/metrics` | JSON platform metrics |
+| `GET` | `/api/audit` | Audit log (who created/deleted what, when) |
 
 ---
 
 ## 🧪 Makefile Commands
 
 ```bash
-# Development
-make run              # Run Go backend locally
-make build            # Build Go binary
-make test             # Run tests
+# ── Development ──
+make run                    # Start Go backend locally
+make build                  # Compile Go binary
+make test                   # Run unit tests
 
-# Docker
-make docker-build           # Build all images
-make docker-build-platform  # Build Go backend image
-make docker-build-dashboard # Build dashboard image
-make docker-build-medusa    # Build Medusa image
-make docker-build-storefront # Build storefront image
+# ── Docker ──
+make docker-build-all       # Build platform + all engine images
+make docker-build-medusa    # Build MedusaJS image only
+make docker-build-storefront # Build Next.js storefront image only
 
-# Kind Cluster
-make kind-create      # Create Kind cluster
-make kind-delete      # Delete Kind cluster
-make kind-load        # Load images into Kind
+# ── Kind Cluster ──
+make kind-create            # Create Kind cluster with ingress port mappings
+make kind-delete            # Tear down cluster
+make kind-load              # Load all images into Kind
 
-# Helm
-make helm-lint        # Lint Helm chart
-make helm-template    # Template Helm chart (dry run)
+# ── Ingress ──
+make ingress-install        # Deploy NGINX Ingress Controller
+make ingress-wait           # Wait for controller readiness
 
-# Ingress
-make ingress-install  # Install NGINX Ingress
-make ingress-wait     # Wait for ingress to be ready
+# ── Helm ──
+make helm-lint              # Lint all Helm charts (medusa + woocommerce)
+make helm-template          # Dry-run template rendering
+
+# ── Frontend ──
+make frontend-dev           # Start Vite dev server
+make frontend-build         # Production build
 ```
 
 ---
 
-## 📋 Assessment Features Implemented
+## ✅ Assessment Checklist
 
-| Feature | Status | Location |
-|---------|--------|----------|
-| Multi-store provisioning | ✅ | `backend/internal/services/store_service.go` |
-| Namespace isolation | ✅ | Helm chart creates per-store namespace |
-| End-to-end orders | ✅ | MedusaJS storefront |
-| VPS Deployment | ✅ | `values-production.yaml` |
-| ResourceQuota/LimitRange | ✅ | `templates/resourcequota.yaml`, `limitrange.yaml` |
-| Idempotency | ✅ | `store_service.go:provisionStore` |
-| Rate Limiting | ✅ | `backend/internal/middleware/ratelimit.go` |
-| Audit Logging | ✅ | `backend/internal/middleware/audit.go` |
-| Observability (Metrics) | ✅ | `backend/internal/services/metrics.go` |
-| Store Events | ✅ | `GET /api/stores/{id}/events` |
-| RBAC | ✅ | `templates/rbac.yaml` |
-| NetworkPolicy | ✅ | `templates/networkpolicy.yaml` |
-| Upgrade/Rollback | ✅ | `backend/internal/helm/client.go` |
-| Per-user quotas | ✅ | Max 5 stores per user |
+### Mandatory Requirements
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| React dashboard to view/create/delete stores | Done | `frontend/src/App.jsx` |
+| Status, URL, created timestamp per store | Done | Store model + dashboard cards |
+| MedusaJS engine (fully functional) | Done | `charts/medusa-store/`, `engines/medusa/` |
+| WooCommerce engine | Done | `charts/woocommerce-store/` (WordPress + MariaDB) |
+| End-to-end order placement | Done | Seeded products, Manual Payment, checkout flow |
+| Local Kubernetes (Kind) | Done | `scripts/kind-config.yaml`, `make kind-create` |
+| Same Helm charts for production (k3s) | Done | `values-production.yaml` per chart |
+| Helm mandatory (no Kustomize) | Done | Two Helm charts + platform chart |
+| Local vs prod via Helm values only | Done | `values.yaml` / `values-local.yaml` / `values-production.yaml` |
+| K8s-native provisioning | Done | Deployments, StatefulSets, Services, Ingress, PVCs, Secrets |
+| Namespace-per-store isolation | Done | `store-{id}` namespace per store |
+| Persistent database storage | Done | PostgreSQL PVC (Medusa), MariaDB PVC (WooCommerce) |
+| Ingress with stable URLs | Done | `store-{id}.127.0.0.1.nip.io` via nip.io |
+| Readiness / liveness probes | Done | HTTP + TCP probes on all containers |
+| Clean teardown | Done | Helm uninstall + namespace delete |
+| No hardcoded secrets | Done | Helm `lookup` + auto-generation in K8s Secrets |
+
+### Ways to Stand Out (all implemented)
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| **1. Production VPS deployment** | Done | `values-production.yaml`, cert-manager TLS notes |
+| **2. Multi-tenant isolation** | Done | ResourceQuota + LimitRange + max PVC per namespace |
+| **3. Idempotency & recovery** | Done | User+name dedup, BoltDB persistence, reconciliation loop |
+| **4. Abuse prevention** | Done | Rate limiting, per-user quotas, provisioning timeouts, audit log |
+| **5. Observability** | Done | Events, metrics, pod status, logs, failure reasons in dashboard |
+| **6. Network & security hardening** | Done | NetworkPolicy deny-by-default, RBAC, non-root containers |
+| **7. Scaling plan (implemented)** | Done | Bounded worker pool, concurrent provisioning controls |
+| **8. Upgrades & rollback** | Done | `POST /upgrade`, `POST /rollback`, Helm history API |
 
 ---
 
 ## 📄 License
 
-MIT License - This code is for assessment purposes.
+MIT — This code is for assessment purposes. Copyright belongs to the author.
