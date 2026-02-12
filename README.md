@@ -230,24 +230,24 @@ ingress:
 ## 🏗️ Architecture Overview
 
 ```
-┌──────────────────┐     REST      ┌──────────────────┐      Helm       ┌───────────────────────────┐
-│  React Dashboard │◄────────────►│  Go Backend       │────install────►│  Kubernetes Cluster       │
-│  (Vite, :5173)   │              │  (chi, :8080)     │                │                           │
-└──────────────────┘              │                    │                │  ┌──────────────────────┐  │
-                                  │  • Rate Limiter    │                │  │ NS: store-{id}       │  │
-                                  │  • Audit Logger    │                │  │                      │  │
-                                  │  • Helm Client     │                │  │ Medusa  Deployment   │  │
-                                  │  • Health Poller   │                │  │ Storefront Deployment│  │
-                                  │  • BoltDB Repo     │                │  │ PostgreSQL SS + PVC  │  │
-                                  └──────────────────┘                │  │ Redis   Deployment   │  │
-                                                                       │  │ Ingress  / Services  │  │
-                                                                       │  │ Secrets / ConfigMap  │  │
-                                                                       │  │ ResourceQuota        │  │
-                                                                       │  │ LimitRange           │  │
-                                                                       │  │ NetworkPolicy        │  │
-                                                                       │  │ RBAC (SA + Role)     │  │
-                                                                       │  └──────────────────────┘  │
-                                                                       └───────────────────────────┘
+┌──────────────────┐     REST     ┌────────────────────┐      Helm       ┌────────────────────────────┐
+│  React Dashboard │◄────────────►│  Go Backend        │────install────► │  Kubernetes Cluster        │
+│  (Vite, :5173)   │              │  (chi, :8080)      │                 │                            │
+└──────────────────┘              │                    │                 │  ┌──────────────────────┐  │
+                                  │  • Rate Limiter    │                 │  │ NS: store-{id}       │  │
+                                  │  • Audit Logger    │                 │  │                      │  │
+                                  │  • Helm Client     │                 │  │ Medusa  Deployment   │  │
+                                  │  • Health Poller   │                 │  │ Storefront Deployment│  │
+                                  │  • BoltDB Repo     │                 │  │ PostgreSQL SS + PVC  │  │
+                                  └────────────────────┘                 │  │ Redis   Deployment   │  │
+                                                                         │  │ Ingress  / Services  │  │
+                                                                         │  │ Secrets / ConfigMap  │  │
+                                                                         │  │ ResourceQuota        │  │
+                                                                         │  │ LimitRange           │  │
+                                                                         │  │ NetworkPolicy        │  │
+                                                                         │  │ RBAC (SA + Role)     │  │
+                                                                         │  └──────────────────────┘  │
+                                                                         └────────────────────────────┘
 ```
 
 ### Component Responsibilities
