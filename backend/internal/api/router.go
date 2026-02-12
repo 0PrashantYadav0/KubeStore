@@ -19,6 +19,9 @@ func NewRouter(handler *Handler) *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 
+	// Request metrics tracking middleware
+	r.Use(ratelimit.RequestMetricsMiddleware)
+
 	// Rate limiting middleware
 	r.Use(ratelimit.RateLimitMiddleware)
 
@@ -71,6 +74,7 @@ func NewRouter(handler *Handler) *chi.Mux {
 
 		// Metrics and audit
 		r.Get("/metrics", handler.GetMetrics)
+		r.Get("/metrics/pods", handler.GetAggregatedPodMetrics)
 		r.Get("/audit", handler.GetAuditLog)
 	})
 

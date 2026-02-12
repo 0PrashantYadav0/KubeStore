@@ -87,6 +87,12 @@ export async function getMetrics() {
     return response.json();
 }
 
+export async function getAggregatedPodMetrics() {
+    const response = await fetch(`${API_BASE}/metrics/pods`);
+    if (!response.ok) return { total_pods: 0, running_pods: 0, pending_pods: 0, failed_pods: 0, total_restarts: 0, pods: [], per_store_summary: [] };
+    return response.json();
+}
+
 export async function getAuditLog() {
     const response = await fetch(`${API_BASE}/audit`);
     if (!response.ok) return { entries: [] };

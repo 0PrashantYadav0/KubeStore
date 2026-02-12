@@ -14,6 +14,7 @@ import (
 
 	"github.com/kubestore/backend/internal/api"
 	"github.com/kubestore/backend/internal/helm"
+	custommw "github.com/kubestore/backend/internal/middleware"
 	"github.com/kubestore/backend/internal/repository"
 	"github.com/kubestore/backend/internal/services"
 )
@@ -69,6 +70,11 @@ func main() {
 		IngressDomain:         ingressDomain,
 		ChartPath:             chartPath,
 		WooCommerceChartPath:  wooChartPath,
+	})
+
+	// Wire up metrics recorder
+	custommw.SetMetricsRecorder(func(endpoint string, isError bool) {
+		services.PlatformMetrics.RecordAPIRequest(endpoint, isError)
 	})
 
 	handler := api.NewHandler(storeService)

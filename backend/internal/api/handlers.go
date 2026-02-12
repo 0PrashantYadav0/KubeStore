@@ -354,6 +354,112 @@ func (h *Handler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, metrics)
 }
 
+// GetAggregatedPodMetrics handles GET /api/metrics/pods
+// Returns aggregated pod stats across all stores.
+func (h *Handler) GetAggregatedPodMetrics(w http.ResponseWriter, r *http.Request) {
+	stores, err := h.storeService.ListStores()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to list stores", err.Error())
+		return
+	}
+
+	type PodMetric struct {
+		StoreID     string `json:"store_id"`
+		StoreName   string `json:"store_name"`
+		Engine      string `json:"engine"`
+		Component   string `json:"component"`
+		Status      string `json:"status"`
+		Ready       bool   `json:"ready"`
+		Restarts    int    `json:"restarts"`
+		CPU         string `json:"cpu,omitempty"`
+		Memory      string `json:"memory,omitempty"`
+	}
+
+	type AggregatedPodMetrics struct {
+		TotalPods       int         `json:"total_pods"`
+		RunningPods     int         `json:"running_pods"`
+		PendingPods     int         `json:"pending_pods"`
+		FailedPods      int         `json:"failed_pods"`
+		TotalRestarts   int         `json:"total_restarts"`
+		Pods            []PodMetric `json:"pods"`
+		PerStoreSummary []struct {
+			StoreID   string `json:"store_id"`
+			StoreName string `json:"store_name"`
+			Engine    string `json:"engine"`
+			TotalPods int    `json:"total_pods"`
+			Ready     int    `json:"ready"`
+			NotReady  int    `json:"not_ready"`
+			Restarts  int    `json:"restarts"`
+		} `json:"per_store_summary"`
+	}
+
+	result := AggregatedPodMetrics{
+		Pods: make([]PodMetric, 0),
+	}
+
+	for _, store := range stores.Stores {
+		pods, err := h.storeService.GetStorePods(store.ID)
+		if err != nil || pods == nil {
+			continue
+		}
+
+		storeSummary := struct {
+			StoreID   string `json:"store_id"`
+			StoreName string `json:"store_name"`
+			Engine    string `json:"engine"`
+			TotalPods int    `json:"total_pods"`
+			Ready     int    `json:"ready"`
+			NotReady  int    `json:"not_ready"`
+			Restarts  int    `json:"restarts"`
+		}{
+			StoreID:   store.ID,
+			StoreName: store.Name,
+			Engine:    store.Engine,
+		}
+
+		for _, pod := range pods {
+			restarts := 0
+			fmt.Sscanf(pod.Restarts, "%d", &restarts)
+
+			pm := PodMetric{
+				StoreID:   store.ID,
+				StoreName: store.Name,
+				Engine:    store.Engine,
+				Component: pod.Component,
+				Status:    pod.Status,
+				Ready:     pod.Ready == "true",
+				Restarts:  restarts,
+				CPU:       pod.CPU,
+				Memory:    pod.Memory,
+			}
+			result.Pods = append(result.Pods, pm)
+			result.TotalPods++
+
+			switch pod.Status {
+			case "Running":
+				result.RunningPods++
+			case "Pending":
+				result.PendingPods++
+			default:
+				result.FailedPods++
+			}
+
+			result.TotalRestarts += restarts
+			storeSummary.TotalPods++
+			if pod.Ready == "true" {
+				storeSummary.Ready++
+			} else {
+				storeSummary.NotReady++
+			}
+			storeSummary.Restarts += restarts
+		}
+
+		result.PerStoreSummary = append(result.PerStoreSummary, storeSummary)
+	}
+
+	respondJSON(w, http.StatusOK, result)
+}
+
 // PromMetrics exposes Prometheus-style metrics at GET /metrics (text format).
 func (h *Handler) PromMetrics(w http.ResponseWriter, r *http.Request) {
 	m := services.PlatformMetrics.GetSnapshot()
