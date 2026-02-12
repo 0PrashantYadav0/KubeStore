@@ -26,7 +26,7 @@ medusa:
   
   # Environment variables
   env:
-    NODE_ENV: "production"
+    NODE_ENV: "development"
     MEDUSA_ADMIN_ONBOARDING_TYPE: "nextjs"
     STORE_CORS: "*"
     ADMIN_CORS: "*"
@@ -53,8 +53,8 @@ medusa:
   # Admin credentials (for seed)
   admin:
     email: "admin@medusa.local"
-    # Leave empty to auto-generate (stored in K8s Secret, stable across upgrades)
-    password: ""
+    # Known default for local dev; override in values-production.yaml
+    password: "supersecret"
 
 # PostgreSQL database
 postgresql:

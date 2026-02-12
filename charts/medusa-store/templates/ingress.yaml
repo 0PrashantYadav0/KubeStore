@@ -65,6 +65,13 @@ spec:
                 name: {{ include "medusa-store.fullname" . }}-medusa
                 port:
                   number: {{ .Values.service.port }}
+          - path: /uploads
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "medusa-store.fullname" . }}-medusa
+                port:
+                  number: {{ .Values.service.port }}
           {{- if .Values.storefront.enabled }}
           # Frontend routes go to Next.js storefront
           - path: /

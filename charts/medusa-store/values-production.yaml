@@ -54,8 +54,8 @@ medusa:
   # Admin credentials - USE SECRETS IN PRODUCTION
   admin:
     email: "admin@yourdomain.com"
-    # Leave empty to auto-generate (stored in K8s Secret, stable across upgrades).
-    # For production, you can also provide this via an external secret + `--set`.
+    # Leave empty to auto-generate a random 24-char password (stored in K8s Secret).
+    # For production, provide via external secret or `--set medusa.admin.password=...`
     password: ""
 
 # PostgreSQL database

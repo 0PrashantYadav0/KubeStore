@@ -9,5 +9,6 @@ data:
   STORE_CORS: {{ .Values.medusa.env.STORE_CORS | default "*" | quote }}
   ADMIN_CORS: {{ .Values.medusa.env.ADMIN_CORS | default "*" | quote }}
   AUTH_CORS: "*"
+  BACKEND_URL: "http://{{ include "medusa-store.fullname" . }}-medusa:9000"
   STORE_ID: {{ include "medusa-store.storeId" . | quote }}
   STORE_NAME: {{ .Values.store.name | default "Store" | quote }}
