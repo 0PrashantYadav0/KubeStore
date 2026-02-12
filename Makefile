@@ -85,9 +85,9 @@ clean:
 docker-build: docker-build-platform docker-build-dashboard
 	@echo "✅ Platform images built!"
 
-## docker-build-all: Build platform + engine images (Medusa + storefront)
+## docker-build-all: Build platform + all engine images
 docker-build-all: docker-build-platform docker-build-dashboard docker-build-medusa docker-build-storefront
-	@echo "✅ Platform + engine images built!"
+	@echo "✅ Platform + engine images built! (WooCommerce uses official Docker Hub images)"
 
 ## docker-build-platform: Build platform Go backend Docker image
 docker-build-platform:
@@ -171,10 +171,11 @@ ingress-wait:
 # Helm
 # =====================
 
-## helm-lint: Lint Helm chart
+## helm-lint: Lint all Helm charts
 helm-lint:
-	@echo "🔍 Linting Helm chart..."
+	@echo "🔍 Linting Helm charts..."
 	helm lint $(HELM_CHART_PATH)
+	helm lint ./charts/woocommerce-store
 
 ## helm-template: Render Helm templates locally
 helm-template:

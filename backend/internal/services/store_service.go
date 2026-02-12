@@ -22,11 +22,12 @@ import (
 
 // Config holds service configuration
 type Config struct {
-	MaxStoresTotal   int
-	MaxStoresPerUser int
-	ProvisionWorkers int // max concurrent provisioning operations
-	IngressDomain    string
-	ChartPath        string
+	MaxStoresTotal       int
+	MaxStoresPerUser     int
+	ProvisionWorkers     int // max concurrent provisioning operations
+	IngressDomain        string
+	ChartPath            string // default (Medusa) chart path
+	WooCommerceChartPath string // WooCommerce chart path
 }
 
 // StoreService handles store lifecycle management
@@ -64,9 +65,6 @@ func (s *StoreService) CreateStore(req models.CreateStoreRequest, userID string)
 	engine := req.Engine
 	if engine == "" {
 		engine = "medusa"
-	}
-	if engine == "woocommerce" {
-		return nil, models.ErrEngineNotImplemented
 	}
 
 	// Idempotency: if user retries with same name, return existing store.
@@ -120,15 +118,26 @@ func (s *StoreService) provisionStore(store *models.Store) {
 	start := time.Now()
 	namespace := store.Namespace
 	storeURL := fmt.Sprintf("http://store-%s.%s", store.ID, s.config.IngressDomain)
-	healthURL := storeURL + "/health"
 
-	log.Printf("[provision] %s: helm install in %s", store.ID, namespace)
+	// Engine-specific chart path and health URL
+	chartPath := s.config.ChartPath
+	healthURL := storeURL + "/health"
+	adminURL := storeURL + "/app"
+
+	if store.Engine == "woocommerce" {
+		chartPath = s.config.WooCommerceChartPath
+		healthURL = storeURL + "/wp-login.php"
+		adminURL = storeURL + "/wp-admin/"
+	}
+
+	log.Printf("[provision] %s (%s): helm install in %s", store.ID, store.Engine, namespace)
 
 	opts := helm.InstallOptions{
 		ReleaseName: store.ID,
 		Namespace:   namespace,
 		StoreID:     store.ID,
 		StoreName:   store.Name,
+		ChartPath:   chartPath,
 	}
 
 	if err := s.helmClient.Install(opts); err != nil {
@@ -142,15 +151,18 @@ func (s *StoreService) provisionStore(store *models.Store) {
 		return
 	}
 
-	log.Printf("[provision] %s: bootstrapping (publishable key)", store.ID)
-	if err := s.bootstrapStore(storeURL, namespace, store.ID); err != nil {
-		log.Printf("[provision] %s: bootstrap warning (non-fatal): %v", store.ID, err)
-		// Non-fatal: store is usable for admin, just storefront key may be missing
+	// Engine-specific bootstrap
+	if store.Engine == "medusa" || store.Engine == "" {
+		log.Printf("[provision] %s: bootstrapping (publishable key)", store.ID)
+		if err := s.bootstrapStore(storeURL, namespace, store.ID); err != nil {
+			log.Printf("[provision] %s: bootstrap warning (non-fatal): %v", store.ID, err)
+		}
 	}
+	// WooCommerce: no bootstrap needed, WordPress auto-configures via env vars
 
 	store.Status = models.StatusReady
 	store.URL = storeURL
-	store.AdminURL = storeURL + "/app"
+	store.AdminURL = adminURL
 	s.repo.Update(store)
 
 	PlatformMetrics.RecordStoreCreated(time.Since(start).Milliseconds())
@@ -452,9 +464,15 @@ func (s *StoreService) UpgradeStore(id string, values map[string]string) error {
 	lock.Lock()
 	defer lock.Unlock()
 
+	chartPath := s.config.ChartPath
+	if store.Engine == "woocommerce" {
+		chartPath = s.config.WooCommerceChartPath
+	}
+
 	return s.helmClient.Upgrade(helm.UpgradeOptions{
 		ReleaseName: store.ID,
 		Namespace:   store.Namespace,
+		ChartPath:   chartPath,
 		Values:      values,
 	})
 }
@@ -579,8 +597,12 @@ func (s *StoreService) GetStorePods(id string) ([]PodInfo, error) {
 			Restarts: fields[3],
 			Age:      fields[4],
 		}
-		// Determine component from name
+		// Determine component from name (supports both engines)
 		switch {
+		case strings.Contains(fields[0], "wordpress"):
+			pod.Component = "wordpress"
+		case strings.Contains(fields[0], "mariadb"):
+			pod.Component = "mariadb"
 		case strings.Contains(fields[0], "medusa"):
 			pod.Component = "medusa"
 		case strings.Contains(fields[0], "storefront"):
@@ -635,13 +657,22 @@ func (s *StoreService) RestartStore(id string) error {
 	lock.Lock()
 	defer lock.Unlock()
 
-	// Restart all deployments and statefulsets in the namespace
-	for _, resource := range []string{
-		"deployment/" + store.ID + "-medusa-store-medusa",
-		"deployment/" + store.ID + "-storefront",
-		"deployment/" + store.ID + "-medusa-store-redis",
-		"statefulset/" + store.ID + "-medusa-store-postgresql",
-	} {
+	// Restart all deployments and statefulsets in the namespace (engine-specific)
+	var resources []string
+	if store.Engine == "woocommerce" {
+		resources = []string{
+			"deployment/" + store.ID + "-woocommerce-store-wordpress",
+			"statefulset/" + store.ID + "-woocommerce-store-mariadb",
+		}
+	} else {
+		resources = []string{
+			"deployment/" + store.ID + "-medusa-store-medusa",
+			"deployment/" + store.ID + "-storefront",
+			"deployment/" + store.ID + "-medusa-store-redis",
+			"statefulset/" + store.ID + "-medusa-store-postgresql",
+		}
+	}
+	for _, resource := range resources {
 		cmd := exec.Command("kubectl", "rollout", "restart", resource, "-n", store.Namespace)
 		cmd.Run() // best effort
 	}
@@ -655,11 +686,14 @@ func (s *StoreService) RestartStore(id string) error {
 // ---------------------------------------------------------------------------
 
 type StoreHealthInfo struct {
-	Healthy      bool   `json:"healthy"`
-	MedusaStatus string `json:"medusa_status"`
-	StorefrontOK bool   `json:"storefront_ok"`
-	RedisOK      bool   `json:"redis_ok"`
-	PostgresOK   bool   `json:"postgres_ok"`
+	Healthy        bool   `json:"healthy"`
+	Engine         string `json:"engine"`
+	MedusaStatus   string `json:"medusa_status,omitempty"`
+	StorefrontOK   bool   `json:"storefront_ok,omitempty"`
+	RedisOK        bool   `json:"redis_ok,omitempty"`
+	PostgresOK     bool   `json:"postgres_ok,omitempty"`
+	WordpressStatus string `json:"wordpress_status,omitempty"`
+	MariadbOK      bool   `json:"mariadb_ok,omitempty"`
 }
 
 func (s *StoreService) CheckStoreHealth(id string) (*StoreHealthInfo, error) {
@@ -668,47 +702,80 @@ func (s *StoreService) CheckStoreHealth(id string) (*StoreHealthInfo, error) {
 		return nil, err
 	}
 
-	health := &StoreHealthInfo{}
+	health := &StoreHealthInfo{Engine: store.Engine}
 	storeURL := fmt.Sprintf("http://store-%s.%s", store.ID, s.config.IngressDomain)
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// Check Medusa health
-	if resp, err := client.Get(storeURL + "/health"); err == nil {
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			health.MedusaStatus = "healthy"
+	if store.Engine == "woocommerce" {
+		// Check WordPress health via wp-login.php
+		if resp, err := client.Get(storeURL + "/wp-login.php"); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusFound {
+				health.WordpressStatus = "healthy"
+			} else {
+				health.WordpressStatus = fmt.Sprintf("unhealthy (status %d)", resp.StatusCode)
+			}
 		} else {
-			health.MedusaStatus = fmt.Sprintf("unhealthy (status %d)", resp.StatusCode)
+			health.WordpressStatus = "unreachable"
 		}
+
+		// Check MariaDB pod
+		cmd := exec.Command("kubectl", "get", "pods", "-n", store.Namespace,
+			"-o", "custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready",
+			"--no-headers")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if cmd.Run() == nil {
+			for _, line := range strings.Split(out.String(), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) < 2 {
+					continue
+				}
+				ready := fields[1] == "true"
+				if strings.Contains(fields[0], "mariadb") {
+					health.MariadbOK = ready
+				}
+			}
+		}
+		health.Healthy = health.WordpressStatus == "healthy" && health.MariadbOK
 	} else {
-		health.MedusaStatus = "unreachable"
-	}
-
-	// Check pods for storefront, redis, postgres
-	cmd := exec.Command("kubectl", "get", "pods", "-n", store.Namespace,
-		"-o", "custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready",
-		"--no-headers")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if cmd.Run() == nil {
-		for _, line := range strings.Split(out.String(), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) < 2 {
-				continue
+		// Medusa engine health check
+		if resp, err := client.Get(storeURL + "/health"); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				health.MedusaStatus = "healthy"
+			} else {
+				health.MedusaStatus = fmt.Sprintf("unhealthy (status %d)", resp.StatusCode)
 			}
-			ready := fields[1] == "true"
-			switch {
-			case strings.Contains(fields[0], "storefront"):
-				health.StorefrontOK = ready
-			case strings.Contains(fields[0], "redis"):
-				health.RedisOK = ready
-			case strings.Contains(fields[0], "postgresql"):
-				health.PostgresOK = ready
+		} else {
+			health.MedusaStatus = "unreachable"
+		}
+
+		cmd := exec.Command("kubectl", "get", "pods", "-n", store.Namespace,
+			"-o", "custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready",
+			"--no-headers")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if cmd.Run() == nil {
+			for _, line := range strings.Split(out.String(), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) < 2 {
+					continue
+				}
+				ready := fields[1] == "true"
+				switch {
+				case strings.Contains(fields[0], "storefront"):
+					health.StorefrontOK = ready
+				case strings.Contains(fields[0], "redis"):
+					health.RedisOK = ready
+				case strings.Contains(fields[0], "postgresql"):
+					health.PostgresOK = ready
+				}
 			}
 		}
+		health.Healthy = health.MedusaStatus == "healthy" && health.StorefrontOK && health.RedisOK && health.PostgresOK
 	}
 
-	health.Healthy = health.MedusaStatus == "healthy" && health.StorefrontOK && health.RedisOK && health.PostgresOK
 	return health, nil
 }
 
@@ -728,6 +795,7 @@ func (s *StoreService) GetStoreLogs(id, component string, lines int) (string, er
 
 	label := ""
 	switch component {
+	// Medusa components
 	case "medusa":
 		label = "app.kubernetes.io/component=medusa"
 	case "storefront":
@@ -736,8 +804,13 @@ func (s *StoreService) GetStoreLogs(id, component string, lines int) (string, er
 		label = "app.kubernetes.io/component=redis"
 	case "postgresql":
 		label = "app.kubernetes.io/component=postgresql"
+	// WooCommerce components
+	case "wordpress":
+		label = "app.kubernetes.io/component=wordpress"
+	case "mariadb":
+		label = "app.kubernetes.io/component=mariadb"
 	default:
-		return "", fmt.Errorf("unknown component: %s (use medusa, storefront, redis, postgresql)", component)
+		return "", fmt.Errorf("unknown component: %s", component)
 	}
 
 	cmd := exec.Command("kubectl", "logs", "-n", store.Namespace, "-l", label,
@@ -777,16 +850,25 @@ func (s *StoreService) reconcileStores() {
 			continue
 		}
 		storeURL := fmt.Sprintf("http://store-%s.%s", store.ID, s.config.IngressDomain)
-		resp, err := client.Get(storeURL + "/health")
+
+		// Engine-specific health endpoint
+		healthPath := "/health"
+		adminURL := storeURL + "/app"
+		if store.Engine == "woocommerce" {
+			healthPath = "/wp-login.php"
+			adminURL = storeURL + "/wp-admin/"
+		}
+
+		resp, err := client.Get(storeURL + healthPath)
 		if err != nil {
 			continue
 		}
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
+		if resp.StatusCode == http.StatusOK || (store.Engine == "woocommerce" && resp.StatusCode == http.StatusFound) {
 			updated := store
 			updated.Status = models.StatusReady
 			updated.URL = storeURL
-			updated.AdminURL = storeURL + "/app"
+			updated.AdminURL = adminURL
 			s.repo.Update(&updated)
 		}
 	}

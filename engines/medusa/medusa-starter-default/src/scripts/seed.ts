@@ -468,6 +468,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: bestSellers.id,
           category_ids: [cat("T-Shirts")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&q=80",
@@ -500,6 +502,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: newArrivals.id,
           category_ids: [cat("Hoodies & Sweatshirts")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=800&q=80",
@@ -532,6 +536,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: bestSellers.id,
           category_ids: [cat("Pants & Joggers")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=800&q=80",
@@ -564,6 +570,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: newArrivals.id,
           category_ids: [cat("Accessories")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=800&q=80",
@@ -588,6 +596,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: summerEssentials.id,
           category_ids: [cat("T-Shirts")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=800&q=80",
@@ -620,6 +630,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: bestSellers.id,
           category_ids: [cat("Pants & Joggers")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1552902865-b72c031ac5ea?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1552902865-b72c031ac5ea?w=800&q=80",
@@ -647,6 +659,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: summerEssentials.id,
           category_ids: [cat("Accessories")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1525966222134-fcfa99b8ae77?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1525966222134-fcfa99b8ae77?w=800&q=80",
@@ -674,6 +688,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: newArrivals.id,
           category_ids: [cat("Jackets & Outerwear")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1576995853123-5a10305d93c0?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1576995853123-5a10305d93c0?w=800&q=80",
@@ -698,6 +714,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: summerEssentials.id,
           category_ids: [cat("Dresses & Skirts")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?w=800&q=80",
@@ -722,6 +740,8 @@ export default async function seedDemoData({ container }: ExecArgs) {
           shipping_profile_id: shippingProfile.id,
           collection_id: bestSellers.id,
           category_ids: [cat("Accessories")],
+          thumbnail:
+            "https://images.unsplash.com/photo-1524592094714-0f0654e20314?w=800&q=80",
           images: [
             {
               url: "https://images.unsplash.com/photo-1524592094714-0f0654e20314?w=800&q=80",

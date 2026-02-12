@@ -34,15 +34,21 @@ type InstallOptions struct {
 	Namespace   string
 	StoreID     string
 	StoreName   string
+	ChartPath   string // override chart path (engine-specific); falls back to config.ChartPath
 	Values      map[string]string
 }
 
 // Install installs a Helm release
 func (c *Client) Install(opts InstallOptions) error {
+	chartPath := c.config.ChartPath
+	if opts.ChartPath != "" {
+		chartPath = opts.ChartPath
+	}
+
 	args := []string{
 		"install",
 		opts.ReleaseName,
-		c.config.ChartPath,
+		chartPath,
 		"--namespace", opts.Namespace,
 		"--create-namespace",
 		"--no-hooks",
@@ -174,15 +180,21 @@ func (c *Client) ReleaseExists(releaseName, namespace string) (bool, error) {
 type UpgradeOptions struct {
 	ReleaseName string
 	Namespace   string
+	ChartPath   string // override chart path (engine-specific); falls back to config.ChartPath
 	Values      map[string]string
 }
 
 // Upgrade upgrades a Helm release
 func (c *Client) Upgrade(opts UpgradeOptions) error {
+	chartPath := c.config.ChartPath
+	if opts.ChartPath != "" {
+		chartPath = opts.ChartPath
+	}
+
 	args := []string{
 		"upgrade",
 		opts.ReleaseName,
-		c.config.ChartPath,
+		chartPath,
 		"--namespace", opts.Namespace,
 		"--wait",
 		"--timeout", "5m",

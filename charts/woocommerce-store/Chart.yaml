@@ -1,0 +1,6 @@
+apiVersion: v2
+name: woocommerce-store
+description: WooCommerce (WordPress) e-commerce store for KubeStore platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

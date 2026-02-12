@@ -1,0 +1,128 @@
+# KubeStore WooCommerce Helm Chart Values - Production
+# Use these values for VPS/production deployment (k3s)
+
+# Store metadata (set by orchestrator)
+store:
+  id: ""
+  name: ""
+
+# WordPress + WooCommerce Configuration (Production)
+wordpress:
+  image:
+    repository: wordpress
+    tag: "6-apache"
+    pullPolicy: IfNotPresent
+
+  replicas: 2  # Multiple replicas for HA
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1"
+
+  env:
+    WORDPRESS_DEBUG: "0"
+
+  admin:
+    user: "admin"
+    password: ""  # auto-generated and stored in K8s Secret
+    email: "admin@yourdomain.com"
+
+  livenessProbe:
+    httpGet:
+      path: /wp-login.php
+      port: 80
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+
+  readinessProbe:
+    httpGet:
+      path: /wp-login.php
+      port: 80
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 15
+
+# MariaDB (Production)
+mariadb:
+  image:
+    repository: mariadb
+    tag: "11"
+    pullPolicy: IfNotPresent
+
+  database: wordpress
+  username: wordpress
+  password: ""  # auto-generated and stored in K8s Secret
+
+  storage:
+    size: "10Gi"
+    storageClass: "local-path"  # k3s default, change for cloud
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1"
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+
+# Ingress configuration (Production)
+ingress:
+  enabled: true
+  className: "nginx"
+  baseDomain: "yourdomain.com"  # CHANGE THIS
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  tls:
+    enabled: true
+    secretName: "store-tls"
+
+# Resource quotas for namespace
+resourceQuota:
+  enabled: true
+  limits:
+    pods: "15"
+    services: "8"
+    secrets: "15"
+    configmaps: "15"
+    persistentvolumeclaims: "5"
+    requests.storage: "50Gi"
+    requests.memory: "4Gi"
+    requests.cpu: "4"
+    limits.memory: "8Gi"
+    limits.cpu: "8"
+
+# Limit range for pods
+limitRange:
+  enabled: true
+  default:
+    memory: "512Mi"
+    cpu: "500m"
+  defaultRequest:
+    memory: "128Mi"
+    cpu: "100m"
+  max:
+    memory: "2Gi"
+    cpu: "2"
+
+# Network Policy (Production)
+networkPolicy:
+  enabled: true
+
+# RBAC (Production)
+rbac:
+  enabled: true

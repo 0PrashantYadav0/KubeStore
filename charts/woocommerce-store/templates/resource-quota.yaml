@@ -1,0 +1,34 @@
+{{- if .Values.resourceQuota.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "woocommerce-store.fullname" . }}-quota
+  labels:
+    {{- include "woocommerce-store.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- range $key, $value := .Values.resourceQuota.limits }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+---
+{{- if .Values.limitRange.enabled }}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ include "woocommerce-store.fullname" . }}-limits
+  labels:
+    {{- include "woocommerce-store.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      default:
+        memory: {{ .Values.limitRange.default.memory }}
+        cpu: {{ .Values.limitRange.default.cpu }}
+      defaultRequest:
+        memory: {{ .Values.limitRange.defaultRequest.memory }}
+        cpu: {{ .Values.limitRange.defaultRequest.cpu }}
+      max:
+        memory: {{ .Values.limitRange.max.memory }}
+        cpu: {{ .Values.limitRange.max.cpu }}
+{{- end }}
+{{- end }}

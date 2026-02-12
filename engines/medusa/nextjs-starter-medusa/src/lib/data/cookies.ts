@@ -1,6 +1,16 @@
 import "server-only"
 import { cookies as nextCookies } from "next/headers"
 
+// Only set Secure flag on cookies when actually serving over HTTPS.
+// In local Kind clusters, NODE_ENV=production but the store is accessed via HTTP,
+// and browsers reject Secure cookies over HTTP — breaking auth and cart.
+const isSecureCookie = (): boolean => {
+  if (process.env.NODE_ENV !== "production") return false
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || ""
+  if (baseUrl.startsWith("http://")) return false
+  return true
+}
+
 export const getAuthHeaders = async (): Promise<
   { authorization: string } | {}
 > => {
@@ -54,8 +64,8 @@ export const setAuthToken = async (token: string) => {
   cookies.set("_medusa_jwt", token, {
     maxAge: 60 * 60 * 24 * 7,
     httpOnly: true,
-    sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    secure: isSecureCookie(),
   })
 }
 
@@ -76,8 +86,8 @@ export const setCartId = async (cartId: string) => {
   cookies.set("_medusa_cart_id", cartId, {
     maxAge: 60 * 60 * 24 * 7,
     httpOnly: true,
-    sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    secure: isSecureCookie(),
   })
 }
 

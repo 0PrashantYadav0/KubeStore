@@ -1,0 +1,62 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default deny all ingress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "woocommerce-store.fullname" . }}-default-deny
+  labels:
+    {{- include "woocommerce-store.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# Allow ingress to WordPress from ingress controller
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "woocommerce-store.fullname" . }}-allow-wordpress
+  labels:
+    {{- include "woocommerce-store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: wordpress
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 80
+---
+# Allow ingress to MariaDB from WordPress only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "woocommerce-store.fullname" . }}-allow-mariadb
+  labels:
+    {{- include "woocommerce-store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: mariadb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: wordpress
+      ports:
+        - protocol: TCP
+          port: 3306
+{{- end }}

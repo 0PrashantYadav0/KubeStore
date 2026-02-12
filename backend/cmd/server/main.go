@@ -22,6 +22,7 @@ func main() {
 	// Configuration from environment
 	port := getEnv("PORT", "8080")
 	chartPath := getEnv("HELM_CHART_PATH", "./charts/medusa-store")
+	wooChartPath := getEnv("HELM_CHART_PATH_WOOCOMMERCE", "./charts/woocommerce-store")
 	ingressDomain := getEnv("INGRESS_DOMAIN", "127.0.0.1.nip.io")
 	valuesFile := getEnv("HELM_VALUES_FILE", "")
 	storeDBPath := getEnv("STORE_DB_PATH", "./data/kubestore.db")
@@ -32,11 +33,13 @@ func main() {
 
 	// Convert to absolute path - try multiple locations
 	chartPath = resolveChartPath(chartPath)
+	wooChartPath = resolveChartPath(wooChartPath)
 	valuesFile = resolveOptionalFile(valuesFile)
 
 	log.Printf("Starting KubeStore Backend")
 	log.Printf("  Port: %s", port)
-	log.Printf("  Helm Chart: %s", chartPath)
+	log.Printf("  Helm Chart (Medusa): %s", chartPath)
+	log.Printf("  Helm Chart (WooCommerce): %s", wooChartPath)
 	log.Printf("  Ingress Domain: %s", ingressDomain)
 	if valuesFile != "" {
 		log.Printf("  Helm Values: %s", valuesFile)
@@ -60,11 +63,12 @@ func main() {
 	})
 
 	storeService := services.NewStoreService(repo, helmClient, services.Config{
-		MaxStoresTotal:   maxStoresTotal,
-		MaxStoresPerUser: maxStoresPerUser,
-		ProvisionWorkers: provisionWorkers,
-		IngressDomain:    ingressDomain,
-		ChartPath:        chartPath,
+		MaxStoresTotal:        maxStoresTotal,
+		MaxStoresPerUser:      maxStoresPerUser,
+		ProvisionWorkers:      provisionWorkers,
+		IngressDomain:         ingressDomain,
+		ChartPath:             chartPath,
+		WooCommerceChartPath:  wooChartPath,
 	})
 
 	handler := api.NewHandler(storeService)
@@ -138,11 +142,13 @@ func resolveChartPath(chartPath string) string {
 		}
 	}
 
+	// Extract chart name from path for fallback search
+	chartName := filepath.Base(chartPath)
 	// Try common relative paths
 	paths := []string{
-		"./charts/medusa-store",
-		"../charts/medusa-store",
-		"../../charts/medusa-store",
+		"./charts/" + chartName,
+		"../charts/" + chartName,
+		"../../charts/" + chartName,
 	}
 
 	for _, p := range paths {
@@ -154,7 +160,7 @@ func resolveChartPath(chartPath string) string {
 		}
 	}
 
-	log.Println("  Warning: Could not locate Helm chart")
+	log.Printf("  Warning: Could not locate Helm chart: %s", chartPath)
 	return chartPath
 }
 

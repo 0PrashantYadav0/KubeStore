@@ -1,0 +1,122 @@
+# KubeStore WooCommerce Helm Chart Values
+# Default values for local development
+
+# Store metadata (set by orchestrator)
+store:
+  id: ""
+  name: ""
+
+# WordPress + WooCommerce Configuration
+wordpress:
+  image:
+    repository: wordpress
+    tag: "6-apache"
+    pullPolicy: IfNotPresent
+
+  replicas: 1
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  env:
+    WORDPRESS_DEBUG: "0"
+
+  # Admin credentials
+  admin:
+    user: "admin"
+    password: ""
+    email: "admin@woocommerce.local"
+
+  livenessProbe:
+    httpGet:
+      path: /wp-login.php
+      port: 80
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+
+  readinessProbe:
+    httpGet:
+      path: /wp-login.php
+      port: 80
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 15
+
+# MariaDB database
+mariadb:
+  image:
+    repository: mariadb
+    tag: "11"
+    pullPolicy: IfNotPresent
+
+  database: wordpress
+  username: wordpress
+  password: ""
+
+  storage:
+    size: "1Gi"
+
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  baseDomain: "127.0.0.1.nip.io"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+
+# Resource quotas for namespace
+resourceQuota:
+  enabled: true
+  limits:
+    pods: "10"
+    services: "5"
+    secrets: "10"
+    configmaps: "10"
+    persistentvolumeclaims: "3"
+    requests.storage: "10Gi"
+    requests.memory: "2Gi"
+    requests.cpu: "2"
+    limits.memory: "4Gi"
+    limits.cpu: "4"
+
+# Limit range for pods
+limitRange:
+  enabled: true
+  default:
+    memory: "256Mi"
+    cpu: "200m"
+  defaultRequest:
+    memory: "64Mi"
+    cpu: "50m"
+  max:
+    memory: "1Gi"
+    cpu: "1"
+
+# Network Policy
+networkPolicy:
+  enabled: true
+
+# RBAC
+rbac:
+  enabled: true

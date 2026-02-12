@@ -36,7 +36,9 @@ function App() {
     const loadStores = useCallback(async () => {
         try {
             const data = await fetchStores()
-            setStores(data.stores || [])
+            // Sort stores by creation time (newest first)
+            const sorted = (data.stores || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            setStores(sorted)
             setError(null)
         } catch (err) {
             setError(err.message)
@@ -277,7 +279,7 @@ function App() {
 
                         <div className="detail-tabs">
                             {['overview', 'pods', 'logs', 'events'].map(t => (
-                                <button key={t} className={`detail-tab ${detailTab === t ? 'active' : ''}`} onClick={() => { setDetailTab(t); if (t === 'logs') loadLogs('medusa') }}>
+                                <button key={t} className={`detail-tab ${detailTab === t ? 'active' : ''}`} onClick={() => { setDetailTab(t); if (t === 'logs') loadLogs((selectedStore.engine || 'medusa') === 'woocommerce' ? 'wordpress' : 'medusa') }}>
                                     {t.charAt(0).toUpperCase() + t.slice(1)}
                                 </button>
                             ))}
@@ -289,26 +291,39 @@ function App() {
                                     <h4 className="detail-section-title">Health Status</h4>
                                     {storeDetail.health ? (
                                         <div className="health-grid">
-                                            <div className={`health-item ${storeDetail.health.medusa_status === 'healthy' ? 'ok' : 'bad'}`}>
-                                                <span className="health-dot" /> Medusa: {storeDetail.health.medusa_status}
-                                            </div>
-                                            <div className={`health-item ${storeDetail.health.storefront_ok ? 'ok' : 'bad'}`}>
-                                                <span className="health-dot" /> Storefront: {storeDetail.health.storefront_ok ? 'Ready' : 'Not Ready'}
-                                            </div>
-                                            <div className={`health-item ${storeDetail.health.redis_ok ? 'ok' : 'bad'}`}>
-                                                <span className="health-dot" /> Redis: {storeDetail.health.redis_ok ? 'Ready' : 'Not Ready'}
-                                            </div>
-                                            <div className={`health-item ${storeDetail.health.postgres_ok ? 'ok' : 'bad'}`}>
-                                                <span className="health-dot" /> PostgreSQL: {storeDetail.health.postgres_ok ? 'Ready' : 'Not Ready'}
-                                            </div>
+                                            {(selectedStore.engine || 'medusa') === 'medusa' ? (
+                                                <>
+                                                    <div className={`health-item ${storeDetail.health.medusa_status === 'healthy' ? 'ok' : 'bad'}`}>
+                                                        <span className="health-dot" /> Medusa: {storeDetail.health.medusa_status}
+                                                    </div>
+                                                    <div className={`health-item ${storeDetail.health.storefront_ok ? 'ok' : 'bad'}`}>
+                                                        <span className="health-dot" /> Storefront: {storeDetail.health.storefront_ok ? 'Ready' : 'Not Ready'}
+                                                    </div>
+                                                    <div className={`health-item ${storeDetail.health.redis_ok ? 'ok' : 'bad'}`}>
+                                                        <span className="health-dot" /> Redis: {storeDetail.health.redis_ok ? 'Ready' : 'Not Ready'}
+                                                    </div>
+                                                    <div className={`health-item ${storeDetail.health.postgres_ok ? 'ok' : 'bad'}`}>
+                                                        <span className="health-dot" /> PostgreSQL: {storeDetail.health.postgres_ok ? 'Ready' : 'Not Ready'}
+                                                    </div>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <div className={`health-item ${storeDetail.health.wordpress_status === 'healthy' ? 'ok' : 'bad'}`}>
+                                                        <span className="health-dot" /> WordPress: {storeDetail.health.wordpress_status || 'unknown'}
+                                                    </div>
+                                                    <div className={`health-item ${storeDetail.health.mariadb_ok ? 'ok' : 'bad'}`}>
+                                                        <span className="health-dot" /> MariaDB: {storeDetail.health.mariadb_ok ? 'Ready' : 'Not Ready'}
+                                                    </div>
+                                                </>
+                                            )}
                                         </div>
                                     ) : <p className="text-muted">Loading health...</p>}
                                 </div>
                                 <div className="detail-section">
                                     <h4 className="detail-section-title">Links</h4>
                                     <div className="link-grid">
-                                        {selectedStore.url && <a href={selectedStore.url} target="_blank" rel="noopener noreferrer" className="link-card">Storefront</a>}
-                                        {selectedStore.admin_url && <a href={selectedStore.admin_url} target="_blank" rel="noopener noreferrer" className="link-card">Admin Panel</a>}
+                                        {selectedStore.url && <a href={selectedStore.url} target="_blank" rel="noopener noreferrer" className="link-card">{(selectedStore.engine || 'medusa') === 'woocommerce' ? 'WordPress Site' : 'Storefront'}</a>}
+                                        {selectedStore.admin_url && <a href={selectedStore.admin_url} target="_blank" rel="noopener noreferrer" className="link-card">{(selectedStore.engine || 'medusa') === 'woocommerce' ? 'WP Admin' : 'Admin Panel'}</a>}
                                     </div>
                                 </div>
                             </div>
@@ -336,7 +351,10 @@ function App() {
                         {detailTab === 'logs' && storeDetail && (
                             <div className="detail-content">
                                 <div className="logs-toolbar">
-                                    {['medusa', 'storefront', 'redis', 'postgresql'].map(c => (
+                                    {((selectedStore.engine || 'medusa') === 'woocommerce'
+                                        ? ['wordpress', 'mariadb']
+                                        : ['medusa', 'storefront', 'redis', 'postgresql']
+                                    ).map(c => (
                                         <button key={c} className="btn btn-sm btn-secondary" onClick={() => loadLogs(c)}>{c}</button>
                                     ))}
                                 </div>
@@ -421,7 +439,7 @@ function App() {
                                 <label className="form-label" htmlFor="storeEngine">Engine</label>
                                 <select id="storeEngine" className="form-input" value={newStoreEngine} onChange={(e) => setNewStoreEngine(e.target.value)}>
                                     <option value="medusa">MedusaJS</option>
-                                    <option value="woocommerce">WooCommerce (stub)</option>
+                                    <option value="woocommerce">WooCommerce</option>
                                 </select>
                             </div>
                             <div className="modal-actions">
