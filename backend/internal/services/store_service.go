@@ -534,6 +534,224 @@ func (s *StoreService) GetStoreEvents(id string) ([]StoreEvent, error) {
 }
 
 // ---------------------------------------------------------------------------
+// Store Pods info (resource usage, status)
+// ---------------------------------------------------------------------------
+
+type PodInfo struct {
+	Name      string `json:"name"`
+	Component string `json:"component"`
+	Status    string `json:"status"`
+	Ready     string `json:"ready"`
+	Restarts  string `json:"restarts"`
+	Age       string `json:"age"`
+	CPU       string `json:"cpu,omitempty"`
+	Memory    string `json:"memory,omitempty"`
+}
+
+func (s *StoreService) GetStorePods(id string) ([]PodInfo, error) {
+	store, err := s.repo.Get(id)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command("kubectl", "get", "pods", "-n", store.Namespace,
+		"-o", "custom-columns=NAME:.metadata.name,STATUS:.status.phase,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp",
+		"--no-headers")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return []PodInfo{}, nil
+	}
+
+	pods := []PodInfo{}
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		pod := PodInfo{
+			Name:     fields[0],
+			Status:   fields[1],
+			Ready:    fields[2],
+			Restarts: fields[3],
+			Age:      fields[4],
+		}
+		// Determine component from name
+		switch {
+		case strings.Contains(fields[0], "medusa"):
+			pod.Component = "medusa"
+		case strings.Contains(fields[0], "storefront"):
+			pod.Component = "storefront"
+		case strings.Contains(fields[0], "postgresql"):
+			pod.Component = "postgresql"
+		case strings.Contains(fields[0], "redis"):
+			pod.Component = "redis"
+		default:
+			pod.Component = "other"
+		}
+		pods = append(pods, pod)
+	}
+
+	// Try to get resource usage
+	topCmd := exec.Command("kubectl", "top", "pods", "-n", store.Namespace, "--no-headers")
+	var topOut bytes.Buffer
+	topCmd.Stdout = &topOut
+	if topCmd.Run() == nil {
+		topMap := map[string][2]string{}
+		for _, line := range strings.Split(strings.TrimSpace(topOut.String()), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				topMap[fields[0]] = [2]string{fields[1], fields[2]}
+			}
+		}
+		for i := range pods {
+			if usage, ok := topMap[pods[i].Name]; ok {
+				pods[i].CPU = usage[0]
+				pods[i].Memory = usage[1]
+			}
+		}
+	}
+
+	return pods, nil
+}
+
+// ---------------------------------------------------------------------------
+// Store restart (restarts all pods)
+// ---------------------------------------------------------------------------
+
+func (s *StoreService) RestartStore(id string) error {
+	store, err := s.repo.Get(id)
+	if err != nil {
+		return err
+	}
+	if store.Status != models.StatusReady {
+		return fmt.Errorf("can only restart stores in ready state")
+	}
+
+	lock := s.getStoreLock(store.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Restart all deployments and statefulsets in the namespace
+	for _, resource := range []string{
+		"deployment/" + store.ID + "-medusa-store-medusa",
+		"deployment/" + store.ID + "-storefront",
+		"deployment/" + store.ID + "-medusa-store-redis",
+		"statefulset/" + store.ID + "-medusa-store-postgresql",
+	} {
+		cmd := exec.Command("kubectl", "rollout", "restart", resource, "-n", store.Namespace)
+		cmd.Run() // best effort
+	}
+
+	log.Printf("[restart] %s: all components restarted", store.ID)
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Store health check (live check against the store)
+// ---------------------------------------------------------------------------
+
+type StoreHealthInfo struct {
+	Healthy      bool   `json:"healthy"`
+	MedusaStatus string `json:"medusa_status"`
+	StorefrontOK bool   `json:"storefront_ok"`
+	RedisOK      bool   `json:"redis_ok"`
+	PostgresOK   bool   `json:"postgres_ok"`
+}
+
+func (s *StoreService) CheckStoreHealth(id string) (*StoreHealthInfo, error) {
+	store, err := s.repo.Get(id)
+	if err != nil {
+		return nil, err
+	}
+
+	health := &StoreHealthInfo{}
+	storeURL := fmt.Sprintf("http://store-%s.%s", store.ID, s.config.IngressDomain)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Check Medusa health
+	if resp, err := client.Get(storeURL + "/health"); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			health.MedusaStatus = "healthy"
+		} else {
+			health.MedusaStatus = fmt.Sprintf("unhealthy (status %d)", resp.StatusCode)
+		}
+	} else {
+		health.MedusaStatus = "unreachable"
+	}
+
+	// Check pods for storefront, redis, postgres
+	cmd := exec.Command("kubectl", "get", "pods", "-n", store.Namespace,
+		"-o", "custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready",
+		"--no-headers")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if cmd.Run() == nil {
+		for _, line := range strings.Split(out.String(), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			ready := fields[1] == "true"
+			switch {
+			case strings.Contains(fields[0], "storefront"):
+				health.StorefrontOK = ready
+			case strings.Contains(fields[0], "redis"):
+				health.RedisOK = ready
+			case strings.Contains(fields[0], "postgresql"):
+				health.PostgresOK = ready
+			}
+		}
+	}
+
+	health.Healthy = health.MedusaStatus == "healthy" && health.StorefrontOK && health.RedisOK && health.PostgresOK
+	return health, nil
+}
+
+// ---------------------------------------------------------------------------
+// Store logs (last N lines from a component)
+// ---------------------------------------------------------------------------
+
+func (s *StoreService) GetStoreLogs(id, component string, lines int) (string, error) {
+	store, err := s.repo.Get(id)
+	if err != nil {
+		return "", err
+	}
+
+	if lines <= 0 || lines > 500 {
+		lines = 100
+	}
+
+	label := ""
+	switch component {
+	case "medusa":
+		label = "app.kubernetes.io/component=medusa"
+	case "storefront":
+		label = "app.kubernetes.io/component=storefront"
+	case "redis":
+		label = "app.kubernetes.io/component=redis"
+	case "postgresql":
+		label = "app.kubernetes.io/component=postgresql"
+	default:
+		return "", fmt.Errorf("unknown component: %s (use medusa, storefront, redis, postgresql)", component)
+	}
+
+	cmd := exec.Command("kubectl", "logs", "-n", store.Namespace, "-l", label,
+		"--tail", fmt.Sprintf("%d", lines), "--all-containers")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("kubectl logs: %s", stderr.String())
+	}
+	return stdout.String(), nil
+}
+
+// ---------------------------------------------------------------------------
 // Background recovery watcher
 // ---------------------------------------------------------------------------
 

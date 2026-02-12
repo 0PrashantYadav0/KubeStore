@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+.cache
+.git
+.env
+.env.*
+*.log
+*.md
+.vscode
+.idea
+e2e

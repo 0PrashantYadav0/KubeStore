@@ -247,6 +247,107 @@ func (h *Handler) GetStoreEvents(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]interface{}{"events": events})
 }
 
+// GetStorePods handles GET /api/stores/{id}/pods
+func (h *Handler) GetStorePods(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondError(w, http.StatusBadRequest, "store id is required", "")
+		return
+	}
+
+	pods, err := h.storeService.GetStorePods(id)
+	if err != nil {
+		if errors.Is(err, models.ErrStoreNotFound) {
+			respondError(w, http.StatusNotFound, "store not found", "")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to get pods", err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{"pods": pods, "count": len(pods)})
+}
+
+// RestartStore handles POST /api/stores/{id}/restart
+func (h *Handler) RestartStore(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondError(w, http.StatusBadRequest, "store id is required", "")
+		return
+	}
+
+	clientIP := getClientIP(r)
+
+	err := h.storeService.RestartStore(id)
+	if err != nil {
+		if errors.Is(err, models.ErrStoreNotFound) {
+			respondError(w, http.StatusNotFound, "store not found", "")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to restart store", err.Error())
+		return
+	}
+
+	middleware.Audit.Log("STORE_RESTARTED", clientIP, id, "", "")
+	respondJSON(w, http.StatusOK, map[string]string{"message": "store restart initiated"})
+}
+
+// CheckStoreHealth handles GET /api/stores/{id}/health
+func (h *Handler) CheckStoreHealth(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondError(w, http.StatusBadRequest, "store id is required", "")
+		return
+	}
+
+	health, err := h.storeService.CheckStoreHealth(id)
+	if err != nil {
+		if errors.Is(err, models.ErrStoreNotFound) {
+			respondError(w, http.StatusNotFound, "store not found", "")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to check health", err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, health)
+}
+
+// GetStoreLogs handles GET /api/stores/{id}/logs?component=medusa&lines=100
+func (h *Handler) GetStoreLogs(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondError(w, http.StatusBadRequest, "store id is required", "")
+		return
+	}
+
+	component := r.URL.Query().Get("component")
+	if component == "" {
+		component = "medusa"
+	}
+
+	lines := 100
+	if l := r.URL.Query().Get("lines"); l != "" {
+		fmt.Sscanf(l, "%d", &lines)
+	}
+
+	logs, err := h.storeService.GetStoreLogs(id, component, lines)
+	if err != nil {
+		if errors.Is(err, models.ErrStoreNotFound) {
+			respondError(w, http.StatusNotFound, "store not found", "")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err.Error(), "")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"store_id":  id,
+		"component": component,
+		"logs":      logs,
+	})
+}
+
 // GetMetrics handles GET /api/metrics
 func (h *Handler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics := services.PlatformMetrics.GetSnapshot()

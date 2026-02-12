@@ -3,7 +3,7 @@ node_modules
 vendor
 .env
 build
-data
+db
 **/.next
 **/dist
 **/.yarn/cache

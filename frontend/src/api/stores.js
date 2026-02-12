@@ -45,3 +45,50 @@ export async function getStore(id) {
     }
     return response.json();
 }
+
+export async function restartStore(id) {
+    const response = await fetch(`${API_BASE}/stores/${id}/restart`, {
+        method: 'POST',
+    });
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to restart store');
+    }
+    return response.json();
+}
+
+export async function getStoreHealth(id) {
+    const response = await fetch(`${API_BASE}/stores/${id}/health`);
+    if (!response.ok) return null;
+    return response.json();
+}
+
+export async function getStorePods(id) {
+    const response = await fetch(`${API_BASE}/stores/${id}/pods`);
+    if (!response.ok) return { pods: [] };
+    return response.json();
+}
+
+export async function getStoreLogs(id, component = 'medusa', lines = 50) {
+    const response = await fetch(`${API_BASE}/stores/${id}/logs?component=${component}&lines=${lines}`);
+    if (!response.ok) return { logs: '' };
+    return response.json();
+}
+
+export async function getStoreEvents(id) {
+    const response = await fetch(`${API_BASE}/stores/${id}/events`);
+    if (!response.ok) return { events: [] };
+    return response.json();
+}
+
+export async function getMetrics() {
+    const response = await fetch(`${API_BASE}/metrics`);
+    if (!response.ok) return {};
+    return response.json();
+}
+
+export async function getAuditLog() {
+    const response = await fetch(`${API_BASE}/audit`);
+    if (!response.ok) return { entries: [] };
+    return response.json();
+}

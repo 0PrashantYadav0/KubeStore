@@ -1,0 +1,15 @@
+node_modules
+.medusa
+dist
+.cache
+.git
+.github
+.env
+.env.*
+*.log
+*.md
+.vscode
+.idea
+integration-tests
+.yalc
+yalc.lock

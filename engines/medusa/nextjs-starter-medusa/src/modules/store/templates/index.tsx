@@ -1,4 +1,5 @@
 import { Suspense } from "react"
+import { Heading, Text } from "@medusajs/ui"
 
 import SkeletonProductGrid from "@modules/skeletons/templates/skeleton-product-grid"
 import RefinementList from "@modules/store/components/refinement-list"
@@ -19,24 +20,39 @@ const StoreTemplate = ({
   const sort = sortBy || "created_at"
 
   return (
-    <div
-      className="flex flex-col small:flex-row small:items-start py-6 content-container"
-      data-testid="category-container"
-    >
-      <RefinementList sortBy={sort} />
-      <div className="w-full">
-        <div className="mb-8 text-2xl-semi">
-          <h1 data-testid="store-page-title">All products</h1>
+    <>
+      {/* Store Banner */}
+      <div className="bg-ui-bg-subtle border-b border-ui-border-base">
+        <div className="content-container py-12 text-center">
+          <Heading
+            level="h1"
+            className="text-3xl font-light text-ui-fg-base"
+            data-testid="store-page-title"
+          >
+            All Products
+          </Heading>
+          <Text className="text-ui-fg-subtle mt-2 max-w-md mx-auto">
+            Browse our complete collection of premium clothing and accessories
+          </Text>
         </div>
-        <Suspense fallback={<SkeletonProductGrid />}>
-          <PaginatedProducts
-            sortBy={sort}
-            page={pageNumber}
-            countryCode={countryCode}
-          />
-        </Suspense>
       </div>
-    </div>
+
+      <div
+        className="flex flex-col small:flex-row small:items-start py-8 content-container gap-8"
+        data-testid="category-container"
+      >
+        <RefinementList sortBy={sort} />
+        <div className="w-full">
+          <Suspense fallback={<SkeletonProductGrid />}>
+            <PaginatedProducts
+              sortBy={sort}
+              page={pageNumber}
+              countryCode={countryCode}
+            />
+          </Suspense>
+        </div>
+      </div>
+    </>
   )
 }
 

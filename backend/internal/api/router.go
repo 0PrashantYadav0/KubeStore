@@ -58,6 +58,12 @@ func NewRouter(handler *Handler) *chi.Mux {
 			r.Post("/{id}/upgrade", handler.UpgradeStore)
 			r.Post("/{id}/rollback", handler.RollbackStore)
 
+			// Operations
+			r.Post("/{id}/restart", handler.RestartStore)
+			r.Get("/{id}/health", handler.CheckStoreHealth)
+			r.Get("/{id}/pods", handler.GetStorePods)
+			r.Get("/{id}/logs", handler.GetStoreLogs)
+
 			// History and events
 			r.Get("/{id}/history", handler.GetStoreHistory)
 			r.Get("/{id}/events", handler.GetStoreEvents)

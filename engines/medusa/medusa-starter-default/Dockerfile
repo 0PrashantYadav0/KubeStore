@@ -4,24 +4,24 @@ WORKDIR /server
 
 RUN apk add --no-cache libc6-compat
 
-COPY package.json ./
-COPY package-lock.json* ./
+# ── Dependency layer (cached unless package.json changes) ──
+COPY package.json package-lock.json* ./
+RUN npm install --prefer-offline
 
-RUN npm install
-
+# ── Source layer ──
 COPY . .
 
-# Build Medusa (TypeScript -> dist)
+# ── Build backend TypeScript only (admin served by Vite at runtime) ──
 RUN npm run build
 
-ENV NODE_ENV=production
 EXPOSE 9000
 
-# On startup: migrate DB, sync links, create admin user, seed demo data, then start.
-# User creation & seeding are best-effort (|| true) — they fail harmlessly on re-runs.
+# On startup: migrate, sync, create admin (skip if exists), seed (skip if done), then start.
+# medusa start in NODE_ENV=development uses Vite for admin UI.
 CMD ["sh", "-c", "\
   npx medusa db:migrate && \
   npx medusa db:sync-links && \
-  (npx medusa user -e \"$ADMIN_EMAIL\" -p \"$ADMIN_PASSWORD\" 2>&1 || true) && \
+  (npx medusa user -e \"$ADMIN_EMAIL\" -p \"$ADMIN_PASSWORD\" >/dev/null 2>&1 || true) && \
   (npm run seed 2>&1 || true) && \
-  npm run start"]
+  npx medusa start"]
+  
