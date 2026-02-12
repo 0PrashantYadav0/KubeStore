@@ -173,34 +173,50 @@ export default async function seedDemoData({ container }: ExecArgs) {
     logger.info("Tax regions already exist or partially seeded — skipping.");
   }
 
-  // ── Stock Location ──
+  // ── Stock Location (idempotent) ──
   logger.info("Seeding stock location data...");
-  const { result: stockLocationResult } = await createStockLocationsWorkflow(
-    container
-  ).run({
-    input: {
-      locations: [
-        {
-          name: "Main Warehouse",
-          address: {
-            city: "Copenhagen",
-            country_code: "DK",
-            address_1: "",
-          },
-        },
-      ],
-    },
-  });
-  const stockLocation = stockLocationResult[0];
+  const stockLocationModule = container.resolve(Modules.STOCK_LOCATION);
+  const existingLocations = await stockLocationModule.listStockLocations(
+    { name: "Main Warehouse" },
+    { take: 1 }
+  );
+  let stockLocation: { id: string };
 
-  await updateStoresWorkflow(container).run({
-    input: {
-      selector: { id: store.id },
-      update: {
-        default_location_id: stockLocation.id,
+  if (existingLocations.length > 0) {
+    stockLocation = existingLocations[0];
+    logger.info("Stock location already exists — reusing.");
+  } else {
+    const { result: stockLocationResult } = await createStockLocationsWorkflow(
+      container
+    ).run({
+      input: {
+        locations: [
+          {
+            name: "Main Warehouse",
+            address: {
+              city: "Copenhagen",
+              country_code: "DK",
+              address_1: "",
+            },
+          },
+        ],
       },
-    },
-  });
+    });
+    stockLocation = stockLocationResult[0];
+  }
+
+  try {
+    await updateStoresWorkflow(container).run({
+      input: {
+        selector: { id: store.id },
+        update: {
+          default_location_id: stockLocation.id,
+        },
+      },
+    });
+  } catch (e: any) {
+    logger.info("Store default location already set — skipping.");
+  }
 
   try {
     await link.create({
@@ -215,7 +231,7 @@ export default async function seedDemoData({ container }: ExecArgs) {
     logger.info("Stock-location/fulfillment link already exists — skipping.");
   }
 
-  // ── Fulfillment ──
+  // ── Fulfillment (idempotent) ──
   logger.info("Seeding fulfillment data...");
   const shippingProfiles = await fulfillmentModuleService.listShippingProfiles({
     type: "default",
@@ -237,19 +253,32 @@ export default async function seedDemoData({ container }: ExecArgs) {
     shippingProfile = shippingProfileResult[0];
   }
 
-  const fulfillmentSet = await fulfillmentModuleService.createFulfillmentSets({
-    name: "Main Warehouse delivery",
-    type: "shipping",
-    service_zones: [
-      {
-        name: "Worldwide",
-        geo_zones: countries.map((cc) => ({
-          country_code: cc,
-          type: "country" as const,
-        })),
-      },
-    ],
-  });
+  // Check for existing fulfillment set
+  const existingFulfillmentSets =
+    await fulfillmentModuleService.listFulfillmentSets(
+      { name: "Main Warehouse delivery" },
+      { take: 1, relations: ["service_zones"] }
+    );
+  let fulfillmentSet: any;
+
+  if (existingFulfillmentSets.length > 0) {
+    fulfillmentSet = existingFulfillmentSets[0];
+    logger.info("Fulfillment set already exists — reusing.");
+  } else {
+    fulfillmentSet = await fulfillmentModuleService.createFulfillmentSets({
+      name: "Main Warehouse delivery",
+      type: "shipping",
+      service_zones: [
+        {
+          name: "Worldwide",
+          geo_zones: countries.map((cc) => ({
+            country_code: cc,
+            type: "country" as const,
+          })),
+        },
+      ],
+    });
+  }
 
   try {
     await link.create({
@@ -266,62 +295,71 @@ export default async function seedDemoData({ container }: ExecArgs) {
     );
   }
 
-  await createShippingOptionsWorkflow(container).run({
-    input: [
-      {
-        name: "Standard Shipping",
-        price_type: "flat",
-        provider_id: "manual_manual",
-        service_zone_id: fulfillmentSet.service_zones[0].id,
-        shipping_profile_id: shippingProfile.id,
-        type: {
-          label: "Standard",
-          description: "Delivered in 3-5 business days.",
-          code: "standard",
+  // Only create shipping options if they don't exist for this zone
+  try {
+    await createShippingOptionsWorkflow(container).run({
+      input: [
+        {
+          name: "Standard Shipping",
+          price_type: "flat",
+          provider_id: "manual_manual",
+          service_zone_id: fulfillmentSet.service_zones[0].id,
+          shipping_profile_id: shippingProfile.id,
+          type: {
+            label: "Standard",
+            description: "Delivered in 3-5 business days.",
+            code: "standard",
+          },
+          prices: [
+            { currency_code: "usd", amount: 5 },
+            { currency_code: "eur", amount: 5 },
+            { currency_code: "gbp", amount: 4 },
+            { region_id: region.id, amount: 5 },
+          ],
+          rules: [
+            { attribute: "enabled_in_store", value: "true", operator: "eq" },
+            { attribute: "is_return", value: "false", operator: "eq" },
+          ],
         },
-        prices: [
-          { currency_code: "usd", amount: 5 },
-          { currency_code: "eur", amount: 5 },
-          { currency_code: "gbp", amount: 4 },
-          { region_id: region.id, amount: 5 },
-        ],
-        rules: [
-          { attribute: "enabled_in_store", value: "true", operator: "eq" },
-          { attribute: "is_return", value: "false", operator: "eq" },
-        ],
-      },
-      {
-        name: "Express Shipping",
-        price_type: "flat",
-        provider_id: "manual_manual",
-        service_zone_id: fulfillmentSet.service_zones[0].id,
-        shipping_profile_id: shippingProfile.id,
-        type: {
-          label: "Express",
-          description: "Delivered in 1-2 business days.",
-          code: "express",
+        {
+          name: "Express Shipping",
+          price_type: "flat",
+          provider_id: "manual_manual",
+          service_zone_id: fulfillmentSet.service_zones[0].id,
+          shipping_profile_id: shippingProfile.id,
+          type: {
+            label: "Express",
+            description: "Delivered in 1-2 business days.",
+            code: "express",
+          },
+          prices: [
+            { currency_code: "usd", amount: 15 },
+            { currency_code: "eur", amount: 13 },
+            { currency_code: "gbp", amount: 12 },
+            { region_id: region.id, amount: 13 },
+          ],
+          rules: [
+            { attribute: "enabled_in_store", value: "true", operator: "eq" },
+            { attribute: "is_return", value: "false", operator: "eq" },
+          ],
         },
-        prices: [
-          { currency_code: "usd", amount: 15 },
-          { currency_code: "eur", amount: 13 },
-          { currency_code: "gbp", amount: 12 },
-          { region_id: region.id, amount: 13 },
-        ],
-        rules: [
-          { attribute: "enabled_in_store", value: "true", operator: "eq" },
-          { attribute: "is_return", value: "false", operator: "eq" },
-        ],
-      },
-    ],
-  });
+      ],
+    });
+  } catch (e: any) {
+    logger.info("Shipping options already exist — skipping.");
+  }
   logger.info("Finished seeding fulfillment data.");
 
-  await linkSalesChannelsToStockLocationWorkflow(container).run({
-    input: {
-      id: stockLocation.id,
-      add: [defaultSalesChannel[0].id],
-    },
-  });
+  try {
+    await linkSalesChannelsToStockLocationWorkflow(container).run({
+      input: {
+        id: stockLocation.id,
+        add: [defaultSalesChannel[0].id],
+      },
+    });
+  } catch (e: any) {
+    logger.info("Sales channel already linked to stock location — skipping.");
+  }
   logger.info("Finished seeding stock location data.");
 
   // ── Publishable API Key ──
@@ -367,59 +405,85 @@ export default async function seedDemoData({ container }: ExecArgs) {
   }
   logger.info("Finished seeding publishable API key data.");
 
-  // ── Collections ──
+  // ── Collections (idempotent) ──
   logger.info("Seeding collections...");
-  const { result: collectionResult } = await createCollectionsWorkflow(
-    container
-  ).run({
-    input: {
-      collections: [
-        {
-          title: "New Arrivals",
-          handle: "new-arrivals",
-        },
-        {
-          title: "Best Sellers",
-          handle: "best-sellers",
-        },
-        {
-          title: "Summer Essentials",
-          handle: "summer-essentials",
-        },
-      ],
-    },
-  });
-  const newArrivals = collectionResult.find(
-    (c) => c.handle === "new-arrivals"
-  )!;
-  const bestSellers = collectionResult.find(
-    (c) => c.handle === "best-sellers"
-  )!;
-  const summerEssentials = collectionResult.find(
-    (c) => c.handle === "summer-essentials"
-  )!;
+  const existingCollections = await productModuleService.listProductCollections({});
+  let newArrivals: { id: string };
+  let bestSellers: { id: string };
+  let summerEssentials: { id: string };
+
+  if (existingCollections.length >= 3) {
+    newArrivals = existingCollections.find(
+      (c: any) => c.handle === "new-arrivals"
+    ) || existingCollections[0];
+    bestSellers = existingCollections.find(
+      (c: any) => c.handle === "best-sellers"
+    ) || existingCollections[1];
+    summerEssentials = existingCollections.find(
+      (c: any) => c.handle === "summer-essentials"
+    ) || existingCollections[2];
+    logger.info("Collections already exist — reusing.");
+  } else {
+    const { result: collectionResult } = await createCollectionsWorkflow(
+      container
+    ).run({
+      input: {
+        collections: [
+          {
+            title: "New Arrivals",
+            handle: "new-arrivals",
+          },
+          {
+            title: "Best Sellers",
+            handle: "best-sellers",
+          },
+          {
+            title: "Summer Essentials",
+            handle: "summer-essentials",
+          },
+        ],
+      },
+    });
+    newArrivals = collectionResult.find(
+      (c) => c.handle === "new-arrivals"
+    )!;
+    bestSellers = collectionResult.find(
+      (c) => c.handle === "best-sellers"
+    )!;
+    summerEssentials = collectionResult.find(
+      (c) => c.handle === "summer-essentials"
+    )!;
+  }
   logger.info("Finished seeding collections.");
 
-  // ── Categories ──
+  // ── Categories (idempotent) ──
   logger.info("Seeding product data...");
 
-  const { result: categoryResult } = await createProductCategoriesWorkflow(
-    container
-  ).run({
-    input: {
-      product_categories: [
-        { name: "T-Shirts", is_active: true },
-        { name: "Hoodies & Sweatshirts", is_active: true },
-        { name: "Pants & Joggers", is_active: true },
-        { name: "Accessories", is_active: true },
-        { name: "Jackets & Outerwear", is_active: true },
-        { name: "Dresses & Skirts", is_active: true },
-      ],
-    },
-  });
+  const existingCategories = await productModuleService.listProductCategories({});
+  let categoryResult: any[];
+  if (existingCategories.length >= 6) {
+    categoryResult = existingCategories;
+    logger.info("Categories already exist — reusing.");
+  } else {
+    const { result } = await createProductCategoriesWorkflow(
+      container
+    ).run({
+      input: {
+        product_categories: [
+          { name: "T-Shirts", is_active: true },
+          { name: "Hoodies & Sweatshirts", is_active: true },
+          { name: "Pants & Joggers", is_active: true },
+          { name: "Accessories", is_active: true },
+          { name: "Jackets & Outerwear", is_active: true },
+          { name: "Dresses & Skirts", is_active: true },
+        ],
+      },
+    });
+    categoryResult = result;
+  }
 
   const cat = (name: string) =>
-    categoryResult.find((c) => c.name === name)!.id;
+    categoryResult.find((c: any) => c.name === name)!.id;
 
   // Helper for size-only variants
   const sizeVariants = (prefix: string, eurPrice: number, usdPrice: number) =>

@@ -11,28 +11,32 @@ const requiredEnvs = [
 
 function checkEnvVariables() {
   const missingEnvs = requiredEnvs.filter(function (env) {
+    // Also accept MEDUSA_PUBLISHABLE_KEY (runtime override used in K8s)
+    if (env.key === "NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY") {
+      return !process.env[env.key] && !process.env["MEDUSA_PUBLISHABLE_KEY"]
+    }
     return !process.env[env.key]
   })
 
   if (missingEnvs.length > 0) {
-    console.error(
-      c.red.bold("\n🚫 Error: Missing required environment variables\n")
+    // In Kubernetes, the key is injected at runtime from K8s Secrets.
+    // Warn but don't crash — the middleware will handle the missing key.
+    console.warn(
+      c.yellow.bold("\n⚠ Warning: Missing environment variables\n")
     )
 
     missingEnvs.forEach(function (env) {
-      console.error(c.yellow(`  ${c.bold(env.key)}`))
+      console.warn(c.yellow(`  ${c.bold(env.key)}`))
       if (env.description) {
-        console.error(c.dim(`    ${env.description}\n`))
+        console.warn(c.dim(`    ${env.description}\n`))
       }
     })
 
-    console.error(
+    console.warn(
       c.yellow(
-        "\nPlease set these variables in your .env file or environment before starting the application.\n"
+        "\nThe storefront may not function correctly until these are set.\n"
       )
     )
-
-    process.exit(1)
   }
 }
 

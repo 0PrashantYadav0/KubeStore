@@ -11,7 +11,10 @@ RUN npm install --prefer-offline
 # ── Source layer ──
 COPY . .
 
-RUN npm run build && mkdir -p public && cp -r .medusa/server/public/admin public/admin
+RUN npm run build \
+    && mkdir -p public \
+    && cp -r .medusa/server/public/admin public/admin \
+    && mkdir -p uploads
 
 EXPOSE 9000
 
